@@ -429,6 +429,29 @@ def fetch_country_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
     )
 
 
+def fetch_state_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
+    option_snapshot = FilterSnapshot(
+        agency=snapshot.agency,
+        component=snapshot.component,
+        naics=snapshot.naics,
+        set_aside=snapshot.set_aside,
+        location=ALL_LOCATIONS,
+        start_date=snapshot.start_date or default_start_date(),
+        end_date=snapshot.end_date or default_end_date(),
+    )
+    return fetch_category_options_cached(
+        option_snapshot.agency,
+        option_snapshot.component,
+        option_snapshot.naics,
+        option_snapshot.set_aside,
+        ALL_LOCATIONS,
+        option_snapshot.start_date,
+        option_snapshot.end_date,
+        "state_territory",
+        query_fingerprint(option_snapshot, option_category="state_territory"),
+    )
+
+
 def set_aside_options() -> list[str]:
     return [ALL_SET_ASIDES] + [f"{code} - {label}" for code, label in sorted(SET_ASIDE_TYPE_OPTIONS.items(), key=lambda item: item[1])]
 

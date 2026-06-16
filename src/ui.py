@@ -32,6 +32,8 @@ UNAVAILABLE = "Unable to load options"
 AGENCY_WIDGET_KEY = "filter_agency"
 COMPONENT_WIDGET_KEY = "filter_component"
 NAICS_WIDGET_KEY = "filter_naics"
+SET_ASIDE_WIDGET_KEY = "filter_set_aside"
+LOCATION_WIDGET_KEY = "filter_location"
 INDEX_DEPLOYMENT_ERROR = (
     "Competitor filters are temporarily unavailable because the option index was not included in this deployment."
 )
@@ -577,12 +579,45 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         )
     if naics == UNAVAILABLE:
         naics = ALL_NAICS
+    if naics != current.naics:
+        st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+        st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+
+    optional_snapshot = FilterSnapshot(
+        agency=agency,
+        component=component,
+        naics=naics,
+        set_aside=current.set_aside,
+        location=current.location,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    component_options, naics_options, set_asides, location_options, optional_diagnostics = _option_sets(optional_snapshot)
+    diagnostics.update(optional_diagnostics)
 
     with st.expander("Optional refinements", expanded=False):
-        set_aside = current.set_aside if current.set_aside in set_asides else ALL_SET_ASIDES
-        set_aside = st.selectbox("Set-Aside", set_asides, index=_safe_index(set_asides, set_aside), format_func=_display_option)
-        location = current.location if current.location in location_options else ALL_LOCATIONS
-        location = st.selectbox("Performance Location", location_options, index=_safe_index(location_options, location), format_func=_display_option)
+        set_aside_default = current.set_aside if current.set_aside in set_asides else ALL_SET_ASIDES
+        set_aside_live = _init_filter_widget(SET_ASIDE_WIDGET_KEY, set_aside_default)
+        if set_aside_live not in set_asides:
+            set_aside_live = ALL_SET_ASIDES
+            st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+        set_aside = st.selectbox(
+            "Set-Aside",
+            set_asides,
+            format_func=_display_option,
+            key=SET_ASIDE_WIDGET_KEY,
+        )
+        location_default = current.location if current.location in location_options else ALL_LOCATIONS
+        location_live = _init_filter_widget(LOCATION_WIDGET_KEY, location_default)
+        if location_live not in location_options:
+            location_live = ALL_LOCATIONS
+            st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+        location = st.selectbox(
+            "Performance Location",
+            location_options,
+            format_func=_display_option,
+            key=LOCATION_WIDGET_KEY,
+        )
 
     start_date, end_date, date_error = render_date_range(current)
     if date_error:

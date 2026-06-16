@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.constants import ALL_COMPONENTS, ALL_NAICS
+from src.constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES
 from src.option_index import (
     INDEX_PATH,
     build_index_file,
@@ -24,6 +24,7 @@ from src.option_index import (
     metadata,
     naics_option_values,
     refresh_index_atomically,
+    set_aside_option_values,
     validate_index,
 )
 from src.state import FilterSnapshot
@@ -164,6 +165,21 @@ class OptionIndexLookupTests(unittest.TestCase):
         )
         self.assertEqual(set_asides[0]["set_aside_code"], "WOSB")
         self.assertIn("IRQ - Iraq", locations)
+
+    def test_set_aside_option_values_fall_back_to_catalog_when_index_is_empty(self):
+        options, diag = set_aside_option_values("Department of Defense", "Department of the Army", "541611")
+        self.assertIn(ALL_SET_ASIDES, options)
+        self.assertIn("SBA - Small Business Set-Aside", options)
+        self.assertEqual(diag["cache_level_used"], "catalog_fallback")
+
+    def test_location_option_values_fall_back_to_live_api_when_index_is_empty(self):
+        with patch("src.option_index.fetch_category_options_cached") as mock_country, patch("src.option_index.fetch_state_options") as mock_state:
+            mock_country.return_value = ([ALL_LOCATIONS, "IRQ||Iraq"], {"error": None})
+            mock_state.return_value = ([ALL_LOCATIONS, "VA||Virginia"], {"error": None})
+            options, diag = location_option_values("Department of Defense", "Department of the Army", "541611", "")
+        self.assertIn("IRQ - Iraq", options)
+        self.assertIn("VA - Virginia", options)
+        self.assertEqual(diag["cache_level_used"], "live_api")
 
     def test_index_metadata_is_validated(self):
         meta = metadata()

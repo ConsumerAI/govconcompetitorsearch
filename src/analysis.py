@@ -188,7 +188,7 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
         code = option_code(snapshot.naics)
         scoped = scoped[scoped["naics_code"].astype(str).str.startswith(code, na=False)]
     if snapshot.set_aside != ALL_SET_ASIDES:
-        scoped = scoped[scoped["set_aside_type"] == snapshot.set_aside]
+        scoped = scoped[scoped["set_aside_type"] == option_code(snapshot.set_aside)]
     if snapshot.location != ALL_LOCATIONS:
         code = option_code(snapshot.location).upper()
         if code in STATE_OPTIONS:

@@ -153,6 +153,14 @@ class FilterAndOutputTests(unittest.TestCase):
         )
         self.assertEqual(len(broad), 3)
 
+    def test_set_aside_filter_matches_option_code(self):
+        scoped = filter_transactions(
+            sample_transactions(),
+            FilterSnapshot(agency="Department of State", set_aside="WOSB - Women-Owned Small Business"),
+        )
+        self.assertEqual(len(scoped), 1)
+        self.assertEqual(scoped["set_aside_type"].iloc[0], "WOSB")
+
     def test_encoded_naics_option_filters_by_code(self):
         scoped = filter_transactions(
             sample_transactions(),
