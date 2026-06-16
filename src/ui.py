@@ -112,6 +112,34 @@ def styles() -> None:
             color: rgba(226, 232, 240, .46) !important;
             box-shadow: none !important;
         }
+        .filter-guide-caption {
+            color: #93c5fd;
+            font-size: .9rem;
+            font-weight: 650;
+            margin: 0 0 .45rem;
+            padding: .55rem .75rem;
+            border-left: 3px solid #3b82f6;
+            background: rgba(59, 130, 246, .10);
+            border-radius: 0 8px 8px 0;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"].filter-guide-active {
+            border-color: rgba(59, 130, 246, .72) !important;
+            background: rgba(59, 130, 246, .06) !important;
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, .18), 0 12px 28px rgba(59, 130, 246, .12);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.filter-guide-caption) {
+            border-color: rgba(59, 130, 246, .72) !important;
+            background: rgba(59, 130, 246, .06) !important;
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, .18), 0 12px 28px rgba(59, 130, 246, .12);
+        }
+        .filter-guide-submit-wrap.filter-guide-active {
+            border: 2px solid rgba(59, 130, 246, .72);
+            border-radius: 10px;
+            padding: .75rem .85rem .35rem;
+            margin-top: .35rem;
+            background: rgba(59, 130, 246, .06);
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, .18), 0 12px 28px rgba(59, 130, 246, .12);
+        }
         [data-testid="stExpander"] {
             background: rgba(9, 14, 27, .72) !important;
             border: 1px solid var(--border) !important;
@@ -202,6 +230,42 @@ def _validate_date_range(start_date: str, end_date: str) -> str:
 
 def analysis_disabled(pending: FilterSnapshot, options_ready: bool, date_error: str = "") -> bool:
     return bool(date_error) or not pending.agency or not options_ready
+
+
+def _has_subagencies(component_options: list[str]) -> bool:
+    return any(option not in (UNAVAILABLE, ALL_COMPONENTS) for option in component_options)
+
+
+def _filter_guide_step(
+    agency: str,
+    component_options: list[str],
+    component: str,
+    naics: str,
+    date_error: str,
+    options_ready: bool,
+    *,
+    component_label: str = "bureau",
+) -> tuple[str, str]:
+    if not agency:
+        return "agency", "Start by choosing the awarding agency."
+    if _has_subagencies(component_options) and component == ALL_COMPONENTS and naics == ALL_NAICS:
+        return "component", f"Choose a {component_label.lower()} or keep All Components for agency-wide results."
+    if naics == ALL_NAICS:
+        return "naics", "Pick a NAICS code to focus the competitor set, or keep All NAICS for a broader search."
+    if date_error:
+        return "dates", date_error
+    if not options_ready:
+        return "naics", "Loading filter options..."
+    return "submit", "Everything is set. Click Find Competitors to run the analysis."
+
+
+def _render_guide_caption(step: str, active_step: str, hint: str) -> None:
+    if step == active_step:
+        st.markdown(f'<p class="filter-guide-caption">{html.escape(hint)}</p>', unsafe_allow_html=True)
+
+
+def _guide_container(step: str, active_step: str):
+    return st.container(border=step == active_step)
 
 
 def _ensure_date_state(current: FilterSnapshot) -> None:
@@ -370,7 +434,7 @@ def _option_diagnostic_errors(diagnostics: dict) -> dict:
     return {key: value for key, value in diagnostics.items() if isinstance(value, dict) and value.get("error")}
 
 
-def render_filters() -> tuple[FilterSnapshot, bool, dict]:
+def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     try:
         validate_index()
     except OptionIndexError as exc:
@@ -381,7 +445,7 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict]:
         with st.expander("Developer diagnostics", expanded=False):
             st.json(diagnostics)
         current: FilterSnapshot = st.session_state.pending_snapshot
-        return current, False, {"index": diagnostics}
+        return current, False, {"index": diagnostics}, "agency", "Start by choosing the awarding agency."
     freshness = index_freshness()
     st.session_state.option_index_refresh_needed = bool(freshness.get("is_stale"))
     agencies = [record["agency_name"] for record in get_agency_options()]
@@ -391,13 +455,23 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict]:
     agency_ok = bool(agencies)
     if not agency_ok:
         agency_options = [UNAVAILABLE]
-    agency = st.selectbox(
-        "Agency",
-        agency_options,
-        index=_safe_index(agency_options, current.agency),
-        format_func=_display_option,
-        disabled=not agency_ok,
+    guide_step, guide_hint = _filter_guide_step(
+        current.agency,
+        [ALL_COMPONENTS],
+        current.component,
+        current.naics,
+        date_error,
+        agency_ok,
     )
+    with _guide_container("agency", guide_step):
+        _render_guide_caption("agency", guide_step, guide_hint)
+        agency = st.selectbox(
+            "Agency",
+            agency_options,
+            index=_safe_index(agency_options, current.agency),
+            format_func=_display_option,
+            disabled=not agency_ok,
+        )
     if agency == UNAVAILABLE:
         agency = ""
 
@@ -416,13 +490,24 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict]:
     component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(temporary_snapshot)
     component_config = get_agency_component_config(agency)
     component = current.component if current.component in component_options else ALL_COMPONENTS
-    component = st.selectbox(
-        component_config["label"],
+    guide_step, guide_hint = _filter_guide_step(
+        agency,
         component_options,
-        index=_safe_index(component_options, component),
-        format_func=_display_option,
-        disabled=component_options == [UNAVAILABLE],
+        component,
+        current.naics,
+        date_error,
+        agency_ok and component_options != [UNAVAILABLE],
+        component_label=component_config["label"],
     )
+    with _guide_container("component", guide_step):
+        _render_guide_caption("component", guide_step, guide_hint)
+        component = st.selectbox(
+            component_config["label"],
+            component_options,
+            index=_safe_index(component_options, component),
+            format_func=_display_option,
+            disabled=component_options == [UNAVAILABLE],
+        )
     if component == UNAVAILABLE:
         component = ALL_COMPONENTS
 
@@ -439,7 +524,27 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict]:
         st.session_state.naics_request_generation += 1
     component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(refreshed_snapshot)
     naics = current.naics if current.naics in naics_options else ALL_NAICS
-    naics = st.selectbox("NAICS", naics_options, index=_safe_index(naics_options, naics), format_func=_display_option, disabled=naics_options == [UNAVAILABLE])
+    options_ready = bool(
+        not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
+    )
+    guide_step, guide_hint = _filter_guide_step(
+        agency,
+        component_options,
+        component,
+        naics,
+        date_error,
+        options_ready,
+        component_label=component_config["label"],
+    )
+    with _guide_container("naics", guide_step):
+        _render_guide_caption("naics", guide_step, guide_hint)
+        naics = st.selectbox(
+            "NAICS",
+            naics_options,
+            index=_safe_index(naics_options, naics),
+            format_func=_display_option,
+            disabled=naics_options == [UNAVAILABLE],
+        )
     if naics == UNAVAILABLE:
         naics = ALL_NAICS
 
@@ -449,16 +554,39 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict]:
         location = current.location if current.location in location_options else ALL_LOCATIONS
         location = st.selectbox("Performance Location", location_options, index=_safe_index(location_options, location), format_func=_display_option)
 
-    start_date, end_date, date_error = render_date_range(current)
+    options_ready = bool(
+        not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
+    )
+    guide_step, guide_hint = _filter_guide_step(
+        agency,
+        component_options,
+        component,
+        naics,
+        date_error,
+        options_ready,
+        component_label=component_config["label"],
+    )
+    with _guide_container("dates", guide_step):
+        _render_guide_caption("dates", guide_step, guide_hint)
+        start_date, end_date, date_error = render_date_range(current)
     if date_error:
         st.warning(date_error)
 
     snapshot = FilterSnapshot(agency=agency, component=component, naics=naics, set_aside=set_aside, location=location, start_date=start_date, end_date=end_date)
     st.session_state.pending_snapshot = snapshot
     ready = bool(not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE])
+    guide_step, guide_hint = _filter_guide_step(
+        agency,
+        component_options,
+        component,
+        naics,
+        date_error,
+        ready,
+        component_label=component_config["label"],
+    )
     if not agency_ok:
         diagnostics["agency"] = {"error": {"message": "Unable to load options"}}
-    return snapshot, ready, diagnostics
+    return snapshot, ready, diagnostics, guide_step, guide_hint
 
 
 def metric_card(label: str, value: str, subtext: str, accent: str = "#38bdf8") -> None:
@@ -608,7 +736,7 @@ def main() -> None:
     init_streamlit_state()
     styles()
     st.title("Find Competitors")
-    pending, options_ready, option_diagnostics = render_filters()
+    pending, options_ready, option_diagnostics, guide_step, guide_hint = render_filters()
     option_errors = _option_diagnostic_errors(option_diagnostics)
     if option_errors:
         st.warning("Unable to load options")
@@ -616,32 +744,34 @@ def main() -> None:
     if st.session_state.analysis_results is not None and snapshots_differ(pending, st.session_state.analyzed_snapshot):
         st.caption("Filters changed")
     disabled = analysis_disabled(pending, options_ready, _validate_date_range(pending.start_date, pending.end_date))
-    if st.button("Find Competitors", type="primary", disabled=disabled):
-        progress = st.empty()
-        with st.spinner("Fetching USAspending transactions and ranking competitors..."):
-            transactions, diagnostic = fetch_transactions_for_snapshot(pending, progress_callback=progress.info)
-            st.session_state.last_data_diagnostics = diagnostic
-            if diagnostic.get("error"):
-                st.session_state.last_data_error = diagnostic["error"]
-                st.error("Unable to load the complete selected date range. No new analysis was applied.")
-            else:
-                st.session_state.last_data_error = ""
-                scoped = filter_transactions(transactions, pending)
-                period = diagnostic.get("period", {})
-                analyzed_snapshot = FilterSnapshot(
-                    agency=pending.agency,
-                    component=pending.component,
-                    naics=pending.naics,
-                    set_aside=pending.set_aside,
-                    location=pending.location,
-                    start_date=period.get("start_date", pending.start_date),
-                    end_date=period.get("end_date", pending.end_date),
-                )
-                st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
-                st.session_state.analyzed_snapshot = analyzed_snapshot
-                if not transactions.empty:
-                    st.session_state.base_transactions = transactions
-        progress.empty()
+    with st.container(border=guide_step == "submit" and not disabled):
+        _render_guide_caption("submit", guide_step, guide_hint)
+        if st.button("Find Competitors", type="primary", disabled=disabled):
+            progress = st.empty()
+            with st.spinner("Fetching USAspending transactions and ranking competitors..."):
+                transactions, diagnostic = fetch_transactions_for_snapshot(pending, progress_callback=progress.info)
+                st.session_state.last_data_diagnostics = diagnostic
+                if diagnostic.get("error"):
+                    st.session_state.last_data_error = diagnostic["error"]
+                    st.error("Unable to load the complete selected date range. No new analysis was applied.")
+                else:
+                    st.session_state.last_data_error = ""
+                    scoped = filter_transactions(transactions, pending)
+                    period = diagnostic.get("period", {})
+                    analyzed_snapshot = FilterSnapshot(
+                        agency=pending.agency,
+                        component=pending.component,
+                        naics=pending.naics,
+                        set_aside=pending.set_aside,
+                        location=pending.location,
+                        start_date=period.get("start_date", pending.start_date),
+                        end_date=period.get("end_date", pending.end_date),
+                    )
+                    st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
+                    st.session_state.analyzed_snapshot = analyzed_snapshot
+                    if not transactions.empty:
+                        st.session_state.base_transactions = transactions
+            progress.empty()
     if st.session_state.last_data_error:
         render_diagnostics(st.session_state.last_data_diagnostics)
     results = st.session_state.analysis_results

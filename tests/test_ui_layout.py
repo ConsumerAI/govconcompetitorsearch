@@ -5,13 +5,14 @@ import time
 import unittest
 
 from src import ui
+from src.constants import ALL_COMPONENTS, ALL_NAICS
 
 
 class UiLayoutTests(unittest.TestCase):
     def test_search_control_order_places_date_after_optional_refinements_before_button(self):
         source = inspect.getsource(ui.render_filters) + inspect.getsource(ui.main)
         self.assertLess(source.index('"Agency"'), source.index('"NAICS"'))
-        self.assertLess(source.index('st.selectbox("NAICS"'), source.index('"Optional refinements"'))
+        self.assertLess(source.index('"NAICS"'), source.index('"Optional refinements"'))
         self.assertLess(source.index('"Optional refinements"'), source.index("render_date_range"))
         self.assertLess(source.index("render_date_range"), source.index('"Find Competitors"'))
 
@@ -47,7 +48,40 @@ class UiLayoutTests(unittest.TestCase):
         self.assertTrue(timed_out)
         self.assertLess(elapsed, 0.1)
 
-    def test_loading_and_timeout_messages_include_upstream_selection(self):
+    def test_filter_guide_skips_component_when_agency_has_no_subagencies(self):
+        step, _hint = ui._filter_guide_step(
+            "Department of Example",
+            [ALL_COMPONENTS],
+            ALL_COMPONENTS,
+            ALL_NAICS,
+            "",
+            True,
+        )
+        self.assertEqual(step, "naics")
+
+    def test_filter_guide_highlights_component_when_subagencies_exist(self):
+        step, _hint = ui._filter_guide_step(
+            "Department of State",
+            [ALL_COMPONENTS, "Bureau of Example"],
+            ALL_COMPONENTS,
+            ALL_NAICS,
+            "",
+            True,
+            component_label="Subagency / Bureau",
+        )
+        self.assertEqual(step, "component")
+
+    def test_filter_guide_advances_to_submit_when_required_filters_are_set(self):
+        step, _hint = ui._filter_guide_step(
+            "Department of State",
+            [ALL_COMPONENTS],
+            ALL_COMPONENTS,
+            "541611||Administrative Management",
+            "",
+            True,
+        )
+        self.assertEqual(step, "submit")
+
         self.assertEqual(ui._loading_message("component", "Department of State"), "Loading bureaus / funding offices for Department of State...")
         self.assertEqual(ui._loading_message("component", "Department of the Interior"), "Loading bureaus for Department of the Interior...")
         self.assertIn("Bureau of Reclamation", ui._loading_message("naics", "Department of the Interior", "Bureau of Reclamation"))

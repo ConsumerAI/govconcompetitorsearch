@@ -126,10 +126,11 @@ class DeploymentUiTests(unittest.TestCase):
                 with patch("src.ui.st.expander"):
                     with patch("src.ui.st.json"):
                         with patch("src.ui.st.session_state", new=type("State", (), {"pending_snapshot": ui.FilterSnapshot()})()):
-                            snapshot, ready, diagnostics = ui.render_filters()
+                            snapshot, ready, diagnostics, guide_step, guide_hint = ui.render_filters()
         mocked_error.assert_called_once_with(ui.INDEX_DEPLOYMENT_ERROR)
         self.assertFalse(ready)
         self.assertIn("index", diagnostics)
+        self.assertEqual(guide_step, "agency")
 
 
 if __name__ == "__main__":
