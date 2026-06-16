@@ -121,7 +121,18 @@ class UiLayoutTests(unittest.TestCase):
         source = inspect.getsource(ui._option_sets)
         self.assertIn("allow_default_only=True", source)
 
-    def test_sync_selectbox_state_uses_first_option_when_preferred_missing(self):
+    def test_funding_office_lookups_use_longer_timeout(self):
+        self.assertEqual(
+            ui._lookup_timeout_seconds("Department of State", "Agency Component"),
+            ui.FUNDING_OFFICE_LOOKUP_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(ui._lookup_timeout_seconds("Department of the Interior", "NAICS"), ui.LOOKUP_TIMEOUT_SECONDS)
+
+    def test_retry_button_keys_are_unique_per_lookup_scope(self):
+        key_a = ui._retry_button_key(("Agency Component", "Department of State"))
+        key_b = ui._retry_button_key(("NAICS", "Department of State", "All Components"))
+        self.assertNotEqual(key_a, key_b)
+
         session = {"filter_naics": "541611||Old Code"}
         with mock.patch("src.ui.st.session_state", new=session):
             ui._sync_selectbox_state("filter_naics", [ui.UNAVAILABLE], ui.ALL_NAICS)
@@ -138,6 +149,12 @@ class UiLayoutTests(unittest.TestCase):
         self.assertEqual(
             ui._option_diagnostic_errors({"component": {"error": "timed out"}}),
             {"component": {"error": "timed out"}},
+        )
+        self.assertEqual(
+            ui._option_diagnostic_errors(
+                {"component": {"error": "Unable to load bureaus.", "cache_level_used": "timeout"}}
+            ),
+            {},
         )
 
 

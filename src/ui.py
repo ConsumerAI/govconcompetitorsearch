@@ -29,6 +29,8 @@ from .usaspending import fetch_transactions_for_snapshot
 from .utils import decode_option, format_full_money, format_money, format_option, format_percent
 
 UNAVAILABLE = "Unable to load options"
+FUNDING_OFFICE_LOOKUP_TIMEOUT_SECONDS = 90.0
+_RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
 AGENCY_WIDGET_KEY = "filter_agency"
 COMPONENT_WIDGET_KEY = "filter_component"
 NAICS_WIDGET_KEY = "filter_naics"
@@ -346,6 +348,16 @@ def _timeout_message(kind: str, agency: str, component: str = "") -> str:
     return f"Unable to load performance locations for {component or agency}."
 
 
+def _lookup_timeout_seconds(agency: str, kind: str) -> float:
+    if agency and get_agency_component_config(agency)["dimension_type"] == "funding_office" and kind in {"Agency Component", "NAICS"}:
+        return FUNDING_OFFICE_LOOKUP_TIMEOUT_SECONDS
+    return LOOKUP_TIMEOUT_SECONDS
+
+
+def _retry_button_key(cache_key: tuple) -> str:
+    return "retry_" + "_".join(str(part).replace(" ", "_").replace("/", "_") for part in cache_key)
+
+
 def _run_with_deadline(loader, timeout_seconds: float = LOOKUP_TIMEOUT_SECONDS):
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(loader)
@@ -366,6 +378,7 @@ def _session_cached_lookup(
     loading_text: str,
     timeout_text: str,
     allow_default_only: bool = False,
+    timeout_seconds: float = LOOKUP_TIMEOUT_SECONDS,
 ) -> tuple[list[str], dict]:
     session_cache = st.session_state.option_lookup_cache
     last_valid = st.session_state.last_valid_option_lists
@@ -377,26 +390,30 @@ def _session_cached_lookup(
 
     placeholder = st.empty()
     placeholder.info(loading_text)
-    result, timed_out = _run_with_deadline(loader)
+    result, timed_out = _run_with_deadline(loader, timeout_seconds)
     placeholder.empty()
     elapsed = (time.perf_counter() - started) * 1000
     if timed_out:
         options = list(last_valid.get(key, [])) or [UNAVAILABLE]
-        retry_key = "retry_" + "_".join(str(part).replace(" ", "_").replace("/", "_") for part in key)
-        cols = st.columns([3, 1])
-        with cols[0]:
-            st.warning(timeout_text)
-        with cols[1]:
-            if st.button("Retry", key=retry_key):
-                session_cache.pop(key, None)
-                st.rerun()
-        return options, {
+        diag = {
             "lookup_type": kind,
             "cache_level_used": "timeout",
             "rows_returned": max(0, len(options) - 1),
             "elapsed_ms": elapsed,
             "error": timeout_text,
         }
+        session_cache[key] = (list(options), diag)
+        retry_key = _retry_button_key(key)
+        if retry_key not in _RETRY_BUTTON_KEYS_THIS_RUN:
+            _RETRY_BUTTON_KEYS_THIS_RUN.add(retry_key)
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.warning(timeout_text)
+            with cols[1]:
+                if st.button("Retry", key=retry_key):
+                    session_cache.pop(key, None)
+                    st.rerun()
+        return options, diag
     if result is None:
         return [UNAVAILABLE], {"lookup_type": kind, "cache_level_used": "error", "rows_returned": 0, "elapsed_ms": elapsed}
     options, diag = result
@@ -407,10 +424,16 @@ def _session_cached_lookup(
     return options, {**diag, "elapsed_ms": elapsed}
 
 
-def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[str], list[str], dict]:
+def _option_sets(
+    pending: FilterSnapshot,
+    *,
+    stop_after: str | None = None,
+) -> tuple[list[str], list[str], list[str], list[str], dict]:
     diagnostics: dict = {}
+    set_asides = [ALL_SET_ASIDES]
+    location_options = [ALL_LOCATIONS]
     if not pending.agency:
-        return [ALL_COMPONENTS], [ALL_NAICS], [ALL_SET_ASIDES], [ALL_LOCATIONS], diagnostics
+        return [ALL_COMPONENTS], [ALL_NAICS], set_asides, location_options, diagnostics
 
     component_options, component_diag = _session_cached_lookup(
         "Agency Component",
@@ -419,8 +442,12 @@ def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[st
         loading_text=_loading_message("component", pending.agency),
         timeout_text=_timeout_message("component", pending.agency),
         allow_default_only=True,
+        timeout_seconds=_lookup_timeout_seconds(pending.agency, "Agency Component"),
     )
     diagnostics["component"] = component_diag
+    if stop_after == "component":
+        return component_options, [ALL_NAICS], set_asides, location_options, diagnostics
+
     component = pending.component if pending.component in component_options else ALL_COMPONENTS
 
     naics_options, naics_diag = _session_cached_lookup(
@@ -430,8 +457,12 @@ def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[st
         loading_text=_loading_message("naics", pending.agency, component),
         timeout_text=_timeout_message("naics", pending.agency, component),
         allow_default_only=True,
+        timeout_seconds=_lookup_timeout_seconds(pending.agency, "NAICS"),
     )
     diagnostics["naics"] = naics_diag
+    if stop_after == "naics":
+        return component_options, naics_options, set_asides, location_options, diagnostics
+
     naics = pending.naics if pending.naics in naics_options else ALL_NAICS
     naics_code, _naics_description = decode_option(naics)
 
@@ -466,7 +497,10 @@ def _option_diagnostic_errors(diagnostics: dict) -> dict:
     return {
         key: value
         for key, value in diagnostics.items()
-        if key in required and isinstance(value, dict) and value.get("error")
+        if key in required
+        and isinstance(value, dict)
+        and value.get("error")
+        and value.get("cache_level_used") != "timeout"
     }
 
 
@@ -527,7 +561,8 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         st.session_state.naics_request_generation += 1
         st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
         st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
-    component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(temporary_snapshot)
+        st.session_state.option_lookup_cache = {}
+    component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(temporary_snapshot, stop_after="component")
     component_config = get_agency_component_config(agency)
     component_default = current.component if current.component in component_options else ALL_COMPONENTS
     component_live = _init_filter_widget(COMPONENT_WIDGET_KEY, component_default)
@@ -565,7 +600,8 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     if component != current.component:
         st.session_state.naics_request_generation += 1
         st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
-    component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(refreshed_snapshot)
+    component_options, naics_options, set_asides, location_options, naics_diagnostics = _option_sets(refreshed_snapshot, stop_after="naics")
+    diagnostics.update(naics_diagnostics)
     naics_default = current.naics if current.naics in naics_options else ALL_NAICS
     naics_live = _init_filter_widget(NAICS_WIDGET_KEY, naics_default)
     _sync_selectbox_state(NAICS_WIDGET_KEY, naics_options, naics_default)
