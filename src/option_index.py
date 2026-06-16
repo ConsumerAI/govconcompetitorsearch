@@ -13,8 +13,8 @@ from typing import Callable
 from .agency_components import get_agency_component_config
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, COUNTRY_NAMES, SET_ASIDE_TYPE_OPTIONS, STATE_OPTIONS
 from .state import FilterSnapshot, default_end_date, default_start_date
-from .usaspending import fetch_category_options_cached, fetch_state_options, fetch_subagencies, fetch_toptier_agencies, post_usaspending, query_fingerprint
-from .utils import clean_text, decode_option, encode_option, format_option
+from .usaspending import fetch_scoped_location_options, fetch_scoped_set_aside_options, fetch_subagencies, fetch_toptier_agencies, option_discovery_snapshot, post_usaspending
+from .utils import clean_text, encode_option, format_option
 
 
 SCHEMA_VERSION = "2"
@@ -1005,12 +1005,6 @@ def naics_option_values(agency_name: str, component_value: str | None) -> tuple[
     return [ALL_NAICS] + sorted(values, key=lambda option: format_option(option).lower()), {**diag, "lookup_type": "NAICS"}
 
 
-def _catalog_set_aside_option_values() -> list[str]:
-    return [ALL_SET_ASIDES] + [
-        f"{code} - {label}" for code, label in sorted(SET_ASIDE_TYPE_OPTIONS.items(), key=lambda item: item[1].lower())
-    ]
-
-
 def _location_values_from_rows(rows: list[dict]) -> dict[str, str]:
     values: dict[str, str] = {}
     for row in rows:
@@ -1023,74 +1017,13 @@ def _location_values_from_rows(rows: list[dict]) -> dict[str, str]:
     return values
 
 
-def _live_location_option_values(
-    agency_name: str,
-    component_value: str | None,
-    naics_code: str | None,
-    set_aside_code: str | None,
-) -> tuple[list[str], dict]:
-    component = clean_text(component_value) or ALL_COMPONENTS
-    naics = clean_text(naics_code)
-    naics_option = encode_option(naics, "") if naics and naics != ALL_NAICS else ALL_NAICS
-    set_aside = clean_text(set_aside_code)
-    set_aside_option = f"{set_aside} - {SET_ASIDE_TYPE_OPTIONS.get(set_aside, set_aside)}" if set_aside and set_aside != ALL_SET_ASIDES else ALL_SET_ASIDES
-    snapshot = FilterSnapshot(
-        agency=agency_name,
-        component=component,
-        naics=naics_option,
-        set_aside=set_aside_option,
-        location=ALL_LOCATIONS,
-        start_date=default_start_date(),
-        end_date=default_end_date(),
-    )
-    countries, country_diag = fetch_category_options_cached(
-        snapshot.agency,
-        snapshot.component,
-        snapshot.naics,
-        snapshot.set_aside,
-        snapshot.location,
-        snapshot.start_date,
-        snapshot.end_date,
-        "country",
-        query_fingerprint(snapshot, option_category="country"),
-    )
-    states, state_diag = fetch_state_options(snapshot)
-    values: dict[str, str] = {}
-    for option in states:
-        if option == ALL_LOCATIONS:
-            continue
-        code, description = decode_option(option)
-        if code:
-            values[code] = f"{code} - {STATE_OPTIONS.get(code, description or code)}"
-    for option in countries:
-        if option in {ALL_LOCATIONS, ALL_NAICS}:
-            continue
-        code, description = decode_option(option)
-        if code:
-            values[code] = f"{code} - {COUNTRY_NAMES.get(code, description or code)}"
-    options = [ALL_LOCATIONS] + [values[key] for key in sorted(values)]
-    error = country_diag.get("error") or state_diag.get("error")
-    diag = {
-        "lookup_type": "Performance Location",
-        "cache_level_used": "live_api",
-        "rows_returned": max(0, len(options) - 1),
-        "error": error,
-    }
-    return options, diag
-
-
 def set_aside_option_values(agency_name: str, component_value: str | None, naics_code: str | None) -> tuple[list[str], dict]:
     rows, diag = get_set_aside_options_with_diagnostics(agency_name, component_value, naics_code)
     values = [f"{row['set_aside_code']} - {row['set_aside_description']}" if row["set_aside_description"] else row["set_aside_code"] for row in rows]
     if values:
         return [ALL_SET_ASIDES] + values, {**diag, "lookup_type": "Set-Aside"}
-    catalog = _catalog_set_aside_option_values()
-    return catalog, {
-        **diag,
-        "lookup_type": "Set-Aside",
-        "cache_level_used": "catalog_fallback",
-        "rows_returned": max(0, len(catalog) - 1),
-    }
+    snapshot = option_discovery_snapshot(agency_name, component_value, naics_code)
+    return fetch_scoped_set_aside_options(snapshot)
 
 
 def location_option_values(agency_name: str, component_value: str | None, naics_code: str | None, set_aside_code: str | None) -> tuple[list[str], dict]:
@@ -1098,4 +1031,5 @@ def location_option_values(agency_name: str, component_value: str | None, naics_
     values = _location_values_from_rows(rows)
     if values:
         return [ALL_LOCATIONS] + [values[key] for key in sorted(values)], {**diag, "lookup_type": "Performance Location"}
-    return _live_location_option_values(agency_name, component_value, naics_code, set_aside_code)
+    snapshot = option_discovery_snapshot(agency_name, component_value, naics_code, set_aside_code)
+    return fetch_scoped_location_options(snapshot)

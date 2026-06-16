@@ -166,18 +166,19 @@ class OptionIndexLookupTests(unittest.TestCase):
         self.assertEqual(set_asides[0]["set_aside_code"], "WOSB")
         self.assertIn("IRQ - Iraq", locations)
 
-    def test_set_aside_option_values_fall_back_to_catalog_when_index_is_empty(self):
-        options, diag = set_aside_option_values("Department of Defense", "Department of the Army", "541611")
-        self.assertIn(ALL_SET_ASIDES, options)
-        self.assertIn("SBA - Small Business Set-Aside", options)
-        self.assertEqual(diag["cache_level_used"], "catalog_fallback")
+    def test_set_aside_option_values_use_scoped_live_api_when_index_is_empty(self):
+        with patch("src.option_index.fetch_scoped_set_aside_options") as mock_fetch:
+            mock_fetch.return_value = (["All Set-Aside Types", "SBA - Small Business Set-Aside"], {"cache_level_used": "live_api"})
+            options, diag = set_aside_option_values("Department of Defense", "Department of the Army", "541611")
+        mock_fetch.assert_called_once()
+        self.assertEqual(options[1], "SBA - Small Business Set-Aside")
+        self.assertEqual(diag["cache_level_used"], "live_api")
 
-    def test_location_option_values_fall_back_to_live_api_when_index_is_empty(self):
-        with patch("src.option_index.fetch_category_options_cached") as mock_country, patch("src.option_index.fetch_state_options") as mock_state:
-            mock_country.return_value = ([ALL_LOCATIONS, "IRQ||Iraq"], {"error": None})
-            mock_state.return_value = ([ALL_LOCATIONS, "VA||Virginia"], {"error": None})
+    def test_location_option_values_use_scoped_live_api_when_index_is_empty(self):
+        with patch("src.option_index.fetch_scoped_location_options") as mock_fetch:
+            mock_fetch.return_value = (["All Locations", "VA - Virginia"], {"cache_level_used": "live_api"})
             options, diag = location_option_values("Department of Defense", "Department of the Army", "541611", "")
-        self.assertIn("IRQ - Iraq", options)
+        mock_fetch.assert_called_once()
         self.assertIn("VA - Virginia", options)
         self.assertEqual(diag["cache_level_used"], "live_api")
 

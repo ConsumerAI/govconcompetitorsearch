@@ -20,6 +20,7 @@ from .option_index import (
     index_deployment_diagnostics,
     index_freshness,
     location_option_values,
+    location_option_values,
     naics_option_values,
     set_aside_option_values,
     validate_index,
@@ -607,6 +608,19 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
             format_func=_display_option,
             key=SET_ASIDE_WIDGET_KEY,
         )
+        naics_code, _ = decode_option(naics)
+        set_aside_code, _ = decode_option(set_aside)
+        if not set_aside_code and " - " in set_aside:
+            set_aside_code = set_aside.split(" - ", 1)[0]
+        location_options, location_diag = _session_cached_lookup(
+            "Performance Location",
+            (agency, component, naics_code, set_aside_code),
+            lambda: location_option_values(agency, component, naics_code, set_aside_code),
+            loading_text=_loading_message("location", agency, component),
+            timeout_text=_timeout_message("location", agency, component),
+            allow_default_only=True,
+        )
+        diagnostics["location"] = location_diag
         location_default = current.location if current.location in location_options else ALL_LOCATIONS
         location_live = _init_filter_widget(LOCATION_WIDGET_KEY, location_default)
         if location_live not in location_options:

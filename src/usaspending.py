@@ -13,6 +13,8 @@ from datetime import date, timedelta
 import pandas as pd
 import requests
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from .agency_components import get_agency_component_config
 from .analysis import normalize_transactions
 from .constants import (
@@ -23,7 +25,9 @@ from .constants import (
     AWARD_OR_IDV_FLAG,
     AWARD_TYPE_CODES,
     BASE_URL,
+    COUNTRY_NAMES,
     SET_ASIDE_TYPE_OPTIONS,
+    STATE_OPTIONS,
 )
 from .state import FilterSnapshot, default_end_date, default_start_date
 from .utils import clean_text, encode_option, format_option
@@ -450,6 +454,183 @@ def fetch_state_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
         "state_territory",
         query_fingerprint(option_snapshot, option_category="state_territory"),
     )
+
+
+def option_discovery_snapshot(
+    agency: str,
+    component: str | None,
+    naics_code: str | None,
+    set_aside_code: str | None = None,
+) -> FilterSnapshot:
+    component_value = clean_text(component) or ALL_COMPONENTS
+    naics = clean_text(naics_code)
+    naics_option = encode_option(naics, "") if naics and naics != ALL_NAICS else ALL_NAICS
+    set_aside = clean_text(set_aside_code)
+    if set_aside and set_aside != ALL_SET_ASIDES:
+        set_aside_option = f"{set_aside} - {SET_ASIDE_TYPE_OPTIONS.get(set_aside, set_aside)}"
+    else:
+        set_aside_option = ALL_SET_ASIDES
+    return FilterSnapshot(
+        agency=agency,
+        component=component_value,
+        naics=naics_option,
+        set_aside=set_aside_option,
+        location=ALL_LOCATIONS,
+        start_date=default_start_date(),
+        end_date=default_end_date(),
+    )
+
+
+def _fetch_category_result_rows(snapshot: FilterSnapshot, category: str, *, max_pages: int = 20, limit: int = 100) -> tuple[list[dict], dict]:
+    results: list[dict] = []
+    payloads: list[dict] = []
+    for page in range(1, max_pages + 1):
+        payload = category_options_payload(snapshot, category, limit=limit)
+        payload["page"] = page
+        payloads.append(payload)
+        data, failure = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload)
+        if failure:
+            return [], {"error": failure.to_dict(), "payloads": payloads}
+        page_results = data.get("results") if isinstance(data, dict) else []
+        if not page_results:
+            break
+        results.extend(item for item in page_results if isinstance(item, dict))
+        page_meta = data.get("page_metadata") or {}
+        if not page_meta.get("hasNext"):
+            break
+    return results, {"payloads": payloads, "error": None}
+
+
+def _set_aside_code_has_spending(snapshot: FilterSnapshot, code: str) -> bool:
+    filters = base_filters(snapshot)
+    filters["set_aside_type_codes"] = [code]
+    payload = {
+        "category": "country",
+        "spending_level": "transactions",
+        "limit": 1,
+        "page": 1,
+        "filters": filters,
+    }
+    data, failure = post_usaspending("/api/v2/search/spending_by_category/country/", payload)
+    return bool(not failure and data and data.get("results"))
+
+
+def _scoped_location_values(country_rows: list[dict], state_rows: list[dict]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in state_rows:
+        if float(item.get("amount") or 0) <= 0:
+            continue
+        code = clean_text(item.get("code")).upper()
+        if not code:
+            continue
+        name = clean_text(item.get("name")) or STATE_OPTIONS.get(code, code)
+        values[code] = f"{code} - {name}"
+    for item in country_rows:
+        if float(item.get("amount") or 0) <= 0:
+            continue
+        code = clean_text(item.get("code")).upper()
+        if not code or code in {"USA", "US"}:
+            continue
+        name = clean_text(item.get("name")) or COUNTRY_NAMES.get(code, code)
+        values[code] = f"{code} - {name}"
+    return values
+
+
+@functools.lru_cache(maxsize=128)
+def fetch_scoped_set_aside_options_cached(
+    agency: str,
+    component: str,
+    naics: str,
+    start_date: str,
+    end_date: str,
+    query_fingerprint: str,
+) -> tuple[tuple[str, ...], dict]:
+    snapshot = FilterSnapshot(
+        agency=agency,
+        component=component,
+        naics=naics,
+        set_aside=ALL_SET_ASIDES,
+        location=ALL_LOCATIONS,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    codes: list[str] = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_set_aside_code_has_spending, snapshot, code): code for code in SET_ASIDE_TYPE_OPTIONS}
+        for future in as_completed(futures):
+            code = futures[future]
+            if future.result():
+                codes.append(code)
+    values = [
+        f"{code} - {SET_ASIDE_TYPE_OPTIONS[code]}"
+        for code in sorted(codes, key=lambda value: SET_ASIDE_TYPE_OPTIONS[value].lower())
+    ]
+    options = tuple([ALL_SET_ASIDES] + values)
+    return options, {
+        "lookup_type": "Set-Aside",
+        "cache_level_used": "live_api",
+        "rows_returned": max(0, len(options) - 1),
+    }
+
+
+def fetch_scoped_set_aside_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
+    options, diag = fetch_scoped_set_aside_options_cached(
+        snapshot.agency,
+        snapshot.component,
+        snapshot.naics,
+        snapshot.start_date,
+        snapshot.end_date,
+        query_fingerprint(snapshot, option_category="set_aside"),
+    )
+    return list(options), diag
+
+
+@functools.lru_cache(maxsize=128)
+def fetch_scoped_location_options_cached(
+    agency: str,
+    component: str,
+    naics: str,
+    set_aside: str,
+    start_date: str,
+    end_date: str,
+    query_fingerprint: str,
+) -> tuple[tuple[str, ...], dict]:
+    snapshot = FilterSnapshot(
+        agency=agency,
+        component=component,
+        naics=naics,
+        set_aside=set_aside,
+        location=ALL_LOCATIONS,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        country_future = executor.submit(_fetch_category_result_rows, snapshot, "country")
+        state_future = executor.submit(_fetch_category_result_rows, snapshot, "state_territory")
+        country_rows, country_diag = country_future.result()
+        state_rows, state_diag = state_future.result()
+    values = _scoped_location_values(country_rows, state_rows)
+    options = tuple([ALL_LOCATIONS] + [values[key] for key in sorted(values)])
+    error = country_diag.get("error") or state_diag.get("error")
+    return options, {
+        "lookup_type": "Performance Location",
+        "cache_level_used": "live_api",
+        "rows_returned": max(0, len(options) - 1),
+        "error": error,
+    }
+
+
+def fetch_scoped_location_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
+    options, diag = fetch_scoped_location_options_cached(
+        snapshot.agency,
+        snapshot.component,
+        snapshot.naics,
+        snapshot.set_aside,
+        snapshot.start_date,
+        snapshot.end_date,
+        query_fingerprint(snapshot, option_category="location"),
+    )
+    return list(options), diag
 
 
 def set_aside_options() -> list[str]:
