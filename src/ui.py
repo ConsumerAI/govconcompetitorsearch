@@ -95,13 +95,17 @@ def styles() -> None:
             min-height: 42px;
         }
         .stButton>button, .stDownloadButton>button {
-            background: linear-gradient(135deg, #0ea5e9, #14b8a6) !important;
-            border: 1px solid rgba(255,255,255,.18) !important;
+            background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
+            border: 1px solid rgba(147, 197, 253, .55) !important;
             border-radius: 8px !important;
-            color: #001018 !important;
+            color: #ffffff !important;
             font-weight: 800 !important;
             min-height: 42px;
-            box-shadow: 0 14px 30px rgba(20, 184, 166, .18);
+            box-shadow: 0 14px 30px rgba(59, 130, 246, .40);
+        }
+        .stButton>button:hover:not(:disabled), .stDownloadButton>button:hover:not(:disabled) {
+            background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
+            box-shadow: 0 16px 34px rgba(59, 130, 246, .50);
         }
         .stButton>button:disabled {
             background: rgba(148, 163, 184, .16) !important;
