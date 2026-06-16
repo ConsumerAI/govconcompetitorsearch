@@ -241,31 +241,39 @@ def _filter_guide_step(
     component_options: list[str],
     component: str,
     naics: str,
-    date_error: str,
     options_ready: bool,
     *,
     component_label: str = "bureau",
 ) -> tuple[str, str]:
     if not agency:
-        return "agency", "Start by choosing the awarding agency."
-    if _has_subagencies(component_options) and component == ALL_COMPONENTS and naics == ALL_NAICS:
+        return "agency", "Start by choosing the agency."
+    if _has_subagencies(component_options) and component == ALL_COMPONENTS:
         return "component", f"Choose a {component_label.lower()} or keep All Components for agency-wide results."
-    if naics == ALL_NAICS:
-        return "naics", "Pick a NAICS code to focus the competitor set, or keep All NAICS for a broader search."
-    if date_error:
-        return "dates", date_error
     if not options_ready:
         return "naics", "Loading filter options..."
-    return "submit", "Everything is set. Click Find Competitors to run the analysis."
+    if naics == ALL_NAICS:
+        return "naics", "Optionally pick a NAICS code, or click Find Competitors below to run with All NAICS."
+    return "submit", "Click Find Competitors to run the analysis."
 
 
-def _render_guide_caption(step: str, active_step: str, hint: str) -> None:
-    if step == active_step:
-        st.markdown(f'<p class="filter-guide-caption">{html.escape(hint)}</p>', unsafe_allow_html=True)
+def _submit_guide_active(guide_step: str) -> bool:
+    return guide_step in {"naics", "submit"}
 
 
-def _guide_container(step: str, active_step: str):
-    return st.container(border=step == active_step)
+def _guide_suppressed(snapshot: FilterSnapshot) -> bool:
+    analyzed = st.session_state.analyzed_snapshot
+    results = st.session_state.analysis_results
+    return bool(results is not None and analyzed is not None and not snapshots_differ(snapshot, analyzed))
+
+
+def _render_guide_caption(step: str, active_step: str, hint: str, *, suppressed: bool = False) -> None:
+    if suppressed or step != active_step:
+        return
+    st.markdown(f'<p class="filter-guide-caption">{html.escape(hint)}</p>', unsafe_allow_html=True)
+
+
+def _guide_container(step: str, active_step: str, *, suppressed: bool = False):
+    return st.container(border=step == active_step and not suppressed)
 
 
 def _ensure_date_state(current: FilterSnapshot) -> None:
@@ -455,16 +463,16 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     agency_ok = bool(agencies)
     if not agency_ok:
         agency_options = [UNAVAILABLE]
+    suppress_guide = _guide_suppressed(current)
     guide_step, guide_hint = _filter_guide_step(
         current.agency,
         [ALL_COMPONENTS],
         current.component,
         current.naics,
-        date_error,
         agency_ok,
     )
-    with _guide_container("agency", guide_step):
-        _render_guide_caption("agency", guide_step, guide_hint)
+    with _guide_container("agency", guide_step, suppressed=suppress_guide):
+        _render_guide_caption("agency", guide_step, guide_hint, suppressed=suppress_guide)
         agency = st.selectbox(
             "Agency",
             agency_options,
@@ -495,12 +503,11 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         component_options,
         component,
         current.naics,
-        date_error,
         agency_ok and component_options != [UNAVAILABLE],
         component_label=component_config["label"],
     )
-    with _guide_container("component", guide_step):
-        _render_guide_caption("component", guide_step, guide_hint)
+    with _guide_container("component", guide_step, suppressed=suppress_guide):
+        _render_guide_caption("component", guide_step, guide_hint, suppressed=suppress_guide)
         component = st.selectbox(
             component_config["label"],
             component_options,
@@ -532,12 +539,11 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         component_options,
         component,
         naics,
-        date_error,
         options_ready,
         component_label=component_config["label"],
     )
-    with _guide_container("naics", guide_step):
-        _render_guide_caption("naics", guide_step, guide_hint)
+    with _guide_container("naics", guide_step, suppressed=suppress_guide):
+        _render_guide_caption("naics", guide_step, guide_hint, suppressed=suppress_guide)
         naics = st.selectbox(
             "NAICS",
             naics_options,
@@ -554,21 +560,7 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         location = current.location if current.location in location_options else ALL_LOCATIONS
         location = st.selectbox("Performance Location", location_options, index=_safe_index(location_options, location), format_func=_display_option)
 
-    options_ready = bool(
-        not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
-    )
-    guide_step, guide_hint = _filter_guide_step(
-        agency,
-        component_options,
-        component,
-        naics,
-        date_error,
-        options_ready,
-        component_label=component_config["label"],
-    )
-    with _guide_container("dates", guide_step):
-        _render_guide_caption("dates", guide_step, guide_hint)
-        start_date, end_date, date_error = render_date_range(current)
+    start_date, end_date, date_error = render_date_range(current)
     if date_error:
         st.warning(date_error)
 
@@ -580,7 +572,6 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         component_options,
         component,
         naics,
-        date_error,
         ready,
         component_label=component_config["label"],
     )
@@ -744,8 +735,9 @@ def main() -> None:
     if st.session_state.analysis_results is not None and snapshots_differ(pending, st.session_state.analyzed_snapshot):
         st.caption("Filters changed")
     disabled = analysis_disabled(pending, options_ready, _validate_date_range(pending.start_date, pending.end_date))
-    with st.container(border=guide_step == "submit" and not disabled):
-        _render_guide_caption("submit", guide_step, guide_hint)
+    submit_highlight = _submit_guide_active(guide_step) and not disabled and not _guide_suppressed(pending)
+    with st.container(border=submit_highlight):
+        _render_guide_caption("submit", guide_step, guide_hint, suppressed=not submit_highlight)
         if st.button("Find Competitors", type="primary", disabled=disabled):
             progress = st.empty()
             with st.spinner("Fetching USAspending transactions and ranking competitors..."):

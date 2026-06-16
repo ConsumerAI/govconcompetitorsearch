@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import time
 import unittest
+from unittest import mock
 
 from src import ui
 from src.constants import ALL_COMPONENTS, ALL_NAICS
@@ -54,7 +55,6 @@ class UiLayoutTests(unittest.TestCase):
             [ALL_COMPONENTS],
             ALL_COMPONENTS,
             ALL_NAICS,
-            "",
             True,
         )
         self.assertEqual(step, "naics")
@@ -65,7 +65,6 @@ class UiLayoutTests(unittest.TestCase):
             [ALL_COMPONENTS, "Bureau of Example"],
             ALL_COMPONENTS,
             ALL_NAICS,
-            "",
             True,
             component_label="Subagency / Bureau",
         )
@@ -77,11 +76,41 @@ class UiLayoutTests(unittest.TestCase):
             [ALL_COMPONENTS],
             ALL_COMPONENTS,
             "541611||Administrative Management",
-            "",
             True,
         )
         self.assertEqual(step, "submit")
 
+    def test_filter_guide_highlights_submit_when_all_naics_is_selected(self):
+        step, hint = ui._filter_guide_step(
+            "Department of State",
+            [ALL_COMPONENTS],
+            ALL_COMPONENTS,
+            ALL_NAICS,
+            True,
+        )
+        self.assertEqual(step, "naics")
+        self.assertIn("Find Competitors", hint)
+        self.assertTrue(ui._submit_guide_active(step))
+
+    def test_filter_guide_does_not_include_dates_step(self):
+        source = inspect.getsource(ui._filter_guide_step)
+        self.assertNotIn('"dates"', source)
+
+    def test_guide_suppressed_when_results_match_pending_filters(self):
+        pending = ui.FilterSnapshot(agency="Department of State", naics="541611||Administrative Management")
+        analyzed = ui.FilterSnapshot(agency="Department of State", naics="541611||Administrative Management")
+        session = type("State", (), {"analysis_results": {"leaderboard": []}, "analyzed_snapshot": analyzed})()
+        with mock.patch("src.ui.st.session_state", new=session):
+            self.assertTrue(ui._guide_suppressed(pending))
+
+    def test_guide_not_suppressed_when_filters_changed_after_results(self):
+        pending = ui.FilterSnapshot(agency="Department of the Interior")
+        analyzed = ui.FilterSnapshot(agency="Department of State")
+        session = type("State", (), {"analysis_results": {"leaderboard": []}, "analyzed_snapshot": analyzed})()
+        with mock.patch("src.ui.st.session_state", new=session):
+            self.assertFalse(ui._guide_suppressed(pending))
+
+    def test_loading_and_timeout_messages_include_upstream_selection(self):
         self.assertEqual(ui._loading_message("component", "Department of State"), "Loading bureaus / funding offices for Department of State...")
         self.assertEqual(ui._loading_message("component", "Department of the Interior"), "Loading bureaus for Department of the Interior...")
         self.assertIn("Bureau of Reclamation", ui._loading_message("naics", "Department of the Interior", "Bureau of Reclamation"))
