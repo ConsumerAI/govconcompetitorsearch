@@ -453,7 +453,12 @@ def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[st
 
 
 def _option_diagnostic_errors(diagnostics: dict) -> dict:
-    return {key: value for key, value in diagnostics.items() if isinstance(value, dict) and value.get("error")}
+    required = {"agency", "component", "naics"}
+    return {
+        key: value
+        for key, value in diagnostics.items()
+        if key in required and isinstance(value, dict) and value.get("error")
+    }
 
 
 def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
@@ -584,54 +589,61 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
         st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
 
-    optional_snapshot = FilterSnapshot(
-        agency=agency,
-        component=component,
-        naics=naics,
-        set_aside=current.set_aside,
-        location=current.location,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    component_options, naics_options, set_asides, location_options, optional_diagnostics = _option_sets(optional_snapshot)
-    diagnostics.update(optional_diagnostics)
+    set_aside = ALL_SET_ASIDES
+    location = ALL_LOCATIONS
+    if agency:
+        optional_snapshot = FilterSnapshot(
+            agency=agency,
+            component=component,
+            naics=naics,
+            set_aside=current.set_aside,
+            location=current.location,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        component_options, naics_options, set_asides, location_options, optional_diagnostics = _option_sets(optional_snapshot)
+        diagnostics.update(optional_diagnostics)
 
-    with st.expander("Optional refinements", expanded=False):
-        set_aside_default = current.set_aside if current.set_aside in set_asides else ALL_SET_ASIDES
-        set_aside_live = _init_filter_widget(SET_ASIDE_WIDGET_KEY, set_aside_default)
-        if set_aside_live not in set_asides:
-            set_aside_live = ALL_SET_ASIDES
-            st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
-        set_aside = st.selectbox(
-            "Set-Aside",
-            set_asides,
-            format_func=_display_option,
-            key=SET_ASIDE_WIDGET_KEY,
-        )
-        naics_code, _ = decode_option(naics)
-        set_aside_code, _ = decode_option(set_aside)
-        if not set_aside_code and " - " in set_aside:
-            set_aside_code = set_aside.split(" - ", 1)[0]
-        location_options, location_diag = _session_cached_lookup(
-            "Performance Location",
-            (agency, component, naics_code, set_aside_code),
-            lambda: location_option_values(agency, component, naics_code, set_aside_code),
-            loading_text=_loading_message("location", agency, component),
-            timeout_text=_timeout_message("location", agency, component),
-            allow_default_only=True,
-        )
-        diagnostics["location"] = location_diag
-        location_default = current.location if current.location in location_options else ALL_LOCATIONS
-        location_live = _init_filter_widget(LOCATION_WIDGET_KEY, location_default)
-        if location_live not in location_options:
-            location_live = ALL_LOCATIONS
-            st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
-        location = st.selectbox(
-            "Performance Location",
-            location_options,
-            format_func=_display_option,
-            key=LOCATION_WIDGET_KEY,
-        )
+        with st.expander("Optional refinements", expanded=False):
+            set_aside_default = current.set_aside if current.set_aside in set_asides else ALL_SET_ASIDES
+            set_aside_live = _init_filter_widget(SET_ASIDE_WIDGET_KEY, set_aside_default)
+            if set_aside_live not in set_asides:
+                set_aside_live = ALL_SET_ASIDES
+                st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+            set_aside = st.selectbox(
+                "Set-Aside",
+                set_asides,
+                format_func=_display_option,
+                key=SET_ASIDE_WIDGET_KEY,
+            )
+            naics_code, _ = decode_option(naics)
+            set_aside_code, _ = decode_option(set_aside)
+            if not set_aside_code and " - " in set_aside:
+                set_aside_code = set_aside.split(" - ", 1)[0]
+            location_options, location_diag = _session_cached_lookup(
+                "Performance Location",
+                (agency, component, naics_code, set_aside_code),
+                lambda: location_option_values(agency, component, naics_code, set_aside_code),
+                loading_text=_loading_message("location", agency, component),
+                timeout_text=_timeout_message("location", agency, component),
+                allow_default_only=True,
+            )
+            if location_diag.get("error"):
+                diagnostics["location"] = location_diag
+            location_default = current.location if current.location in location_options else ALL_LOCATIONS
+            location_live = _init_filter_widget(LOCATION_WIDGET_KEY, location_default)
+            if location_live not in location_options:
+                location_live = ALL_LOCATIONS
+                st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+            location = st.selectbox(
+                "Performance Location",
+                location_options,
+                format_func=_display_option,
+                key=LOCATION_WIDGET_KEY,
+            )
+    else:
+        with st.expander("Optional refinements", expanded=False):
+            st.caption("Select an agency to load set-aside and performance location options.")
 
     start_date, end_date, date_error = render_date_range(current)
     if date_error:

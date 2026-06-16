@@ -128,7 +128,11 @@ class UiLayoutTests(unittest.TestCase):
             "location": {"lookup_type": "Performance Location", "cache_level_used": "persistent_index"},
         }
         self.assertEqual(ui._option_diagnostic_errors(diagnostics), {})
-        self.assertEqual(ui._option_diagnostic_errors({"set_aside": {"error": "timed out"}}), {"set_aside": {"error": "timed out"}})
+        self.assertEqual(ui._option_diagnostic_errors({"set_aside": {"error": "timed out"}}), {})
+        self.assertEqual(
+            ui._option_diagnostic_errors({"component": {"error": "timed out"}}),
+            {"component": {"error": "timed out"}},
+        )
 
 
 if __name__ == "__main__":
