@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+import inspect
+import time
+import unittest
+
+from src import ui
+
+
+class UiLayoutTests(unittest.TestCase):
+    def test_search_control_order_places_date_after_optional_refinements_before_button(self):
+        source = inspect.getsource(ui.render_filters) + inspect.getsource(ui.main)
+        self.assertLess(source.index('"Agency"'), source.index('"NAICS"'))
+        self.assertLess(source.index('st.selectbox("NAICS"'), source.index('"Optional refinements"'))
+        self.assertLess(source.index('"Optional refinements"'), source.index("render_date_range"))
+        self.assertLess(source.index("render_date_range"), source.index('"Find Competitors"'))
+
+    def test_no_quick_fill_buttons_are_visible(self):
+        source = inspect.getsource(ui.render_date_range)
+        self.assertNotIn('st.button("Current FY")', source)
+        self.assertNotIn('st.button("3 Years")', source)
+        self.assertNotIn('st.button("6 Years")', source)
+        self.assertNotIn('st.button("10 Years")', source)
+
+    def test_date_values_remain_editable(self):
+        source = inspect.getsource(ui.render_date_range)
+        self.assertIn('st.date_input("From"', source)
+        self.assertIn('st.date_input("Through"', source)
+
+    def test_internal_messages_are_removed(self):
+        source = inspect.getsource(ui.render_filters) + inspect.getsource(ui.main)
+        self.assertNotIn("Select a NAICS for a more opportunity-specific competitor view.", source)
+        self.assertNotIn("Broad search", source)
+        self.assertNotIn("No prior results are restored", source)
+
+    def test_option_selection_paths_do_not_call_full_transaction_downloads(self):
+        source = inspect.getsource(ui._option_sets) + inspect.getsource(ui.render_filters)
+        self.assertNotIn("fetch_transactions_for_snapshot", source)
+        self.assertNotIn("fetch_transaction_download_rows", source)
+        self.assertNotIn("fetch_transactions_cached", source)
+
+    def test_five_second_timeout_helper_exits_loading_state(self):
+        started = time.perf_counter()
+        result, timed_out = ui._run_with_deadline(lambda: time.sleep(0.05), timeout_seconds=0.01)
+        elapsed = time.perf_counter() - started
+        self.assertIsNone(result)
+        self.assertTrue(timed_out)
+        self.assertLess(elapsed, 0.1)
+
+    def test_loading_and_timeout_messages_include_upstream_selection(self):
+        self.assertEqual(ui._loading_message("component", "Department of State"), "Loading bureaus / funding offices for Department of State...")
+        self.assertEqual(ui._loading_message("component", "Department of the Interior"), "Loading bureaus for Department of the Interior...")
+        self.assertIn("Bureau of Reclamation", ui._loading_message("naics", "Department of the Interior", "Bureau of Reclamation"))
+        self.assertIn("Retry", inspect.getsource(ui._session_cached_lookup))
+        self.assertIn("[UNAVAILABLE]", inspect.getsource(ui._session_cached_lookup))
+
+    def test_optional_refinements_allow_default_only_options(self):
+        source = inspect.getsource(ui._option_sets)
+        self.assertIn("allow_default_only=True", source)
+
+    def test_successful_option_diagnostics_do_not_show_warning(self):
+        diagnostics = {
+            "component": {"lookup_type": "Agency Component", "elapsed_ms": 1.2},
+            "set_aside": {"lookup_type": "Set-Aside", "rows_returned": 0},
+            "location": {"lookup_type": "Performance Location", "cache_level_used": "persistent_index"},
+        }
+        self.assertEqual(ui._option_diagnostic_errors(diagnostics), {})
+        self.assertEqual(ui._option_diagnostic_errors({"set_aside": {"error": "timed out"}}), {"set_aside": {"error": "timed out"}})
+
+
+if __name__ == "__main__":
+    unittest.main()
