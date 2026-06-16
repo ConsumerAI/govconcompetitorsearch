@@ -20,7 +20,6 @@ from .option_index import (
     index_deployment_diagnostics,
     index_freshness,
     location_option_values,
-    location_option_values,
     naics_option_values,
     set_aside_option_values,
     validate_index,
@@ -267,6 +266,14 @@ def _init_filter_widget(key: str, value: str) -> str:
     return st.session_state[key]
 
 
+def _sync_selectbox_state(key: str, options: list[str], preferred: str) -> None:
+    if not options:
+        return
+    current = st.session_state.get(key)
+    if current not in options:
+        st.session_state[key] = preferred if preferred in options else options[0]
+
+
 def _widget_value(key: str, fallback: str = "") -> str:
     value = st.session_state.get(key, fallback)
     if value in {UNAVAILABLE, None}:
@@ -411,6 +418,7 @@ def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[st
         lambda: component_option_values(pending.agency),
         loading_text=_loading_message("component", pending.agency),
         timeout_text=_timeout_message("component", pending.agency),
+        allow_default_only=True,
     )
     diagnostics["component"] = component_diag
     component = pending.component if pending.component in component_options else ALL_COMPONENTS
@@ -421,6 +429,7 @@ def _option_sets(pending: FilterSnapshot) -> tuple[list[str], list[str], list[st
         lambda: naics_option_values(pending.agency, component),
         loading_text=_loading_message("naics", pending.agency, component),
         timeout_text=_timeout_message("naics", pending.agency, component),
+        allow_default_only=True,
     )
     diagnostics["naics"] = naics_diag
     naics = pending.naics if pending.naics in naics_options else ALL_NAICS
@@ -522,9 +531,8 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     component_config = get_agency_component_config(agency)
     component_default = current.component if current.component in component_options else ALL_COMPONENTS
     component_live = _init_filter_widget(COMPONENT_WIDGET_KEY, component_default)
-    if component_live not in component_options:
-        component_live = ALL_COMPONENTS
-        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+    _sync_selectbox_state(COMPONENT_WIDGET_KEY, component_options, component_default)
+    component_live = st.session_state[COMPONENT_WIDGET_KEY]
     focus_step, focus_hint = _filter_guide_step(
         agency,
         component_options,
@@ -560,9 +568,8 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(refreshed_snapshot)
     naics_default = current.naics if current.naics in naics_options else ALL_NAICS
     naics_live = _init_filter_widget(NAICS_WIDGET_KEY, naics_default)
-    if naics_live not in naics_options:
-        naics_live = ALL_NAICS
-        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
+    _sync_selectbox_state(NAICS_WIDGET_KEY, naics_options, naics_default)
+    naics_live = st.session_state[NAICS_WIDGET_KEY]
     options_ready = bool(
         not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
     )

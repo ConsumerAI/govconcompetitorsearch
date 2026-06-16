@@ -121,6 +121,12 @@ class UiLayoutTests(unittest.TestCase):
         source = inspect.getsource(ui._option_sets)
         self.assertIn("allow_default_only=True", source)
 
+    def test_sync_selectbox_state_uses_first_option_when_preferred_missing(self):
+        session = {"filter_naics": "541611||Old Code"}
+        with mock.patch("src.ui.st.session_state", new=session):
+            ui._sync_selectbox_state("filter_naics", [ui.UNAVAILABLE], ui.ALL_NAICS)
+        self.assertEqual(session["filter_naics"], ui.UNAVAILABLE)
+
     def test_successful_option_diagnostics_do_not_show_warning(self):
         diagnostics = {
             "component": {"lookup_type": "Agency Component", "elapsed_ms": 1.2},

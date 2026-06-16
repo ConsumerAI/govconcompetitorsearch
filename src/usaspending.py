@@ -299,6 +299,9 @@ def transaction_payload(snapshot: FilterSnapshot, page: int = 1, limit: int = 10
     }
 
 
+OPTION_DISCOVERY_DOWNLOAD_LIMIT = 10000
+
+
 def transaction_download_payload(snapshot: FilterSnapshot, limit: int | None = None) -> dict:
     payload = {
         "filters": base_filters(snapshot),
@@ -663,9 +666,16 @@ def _download_finished(status_payload: dict) -> bool:
     return str(status_payload.get("status") or "").lower() == "finished"
 
 
-def fetch_transaction_download_rows(snapshot: FilterSnapshot, *, timeout: int = 24, max_elapsed: float = 75.0) -> tuple[list[dict], dict]:
+def fetch_transaction_download_rows(
+    snapshot: FilterSnapshot,
+    *,
+    timeout: int = 24,
+    max_elapsed: float = 75.0,
+    allow_truncated: bool = False,
+    download_limit: int | None = OPTION_DISCOVERY_DOWNLOAD_LIMIT,
+) -> tuple[list[dict], dict]:
     endpoint = "/api/v2/download/transactions/"
-    payload = transaction_download_payload(snapshot)
+    payload = transaction_download_payload(snapshot, limit=download_limit)
     diagnostics = {
         "endpoint": endpoint,
         "method": "POST",
@@ -729,9 +739,11 @@ def fetch_transaction_download_rows(snapshot: FilterSnapshot, *, timeout: int = 
         diagnostics["api_reported_total_rows"] = total_rows
         diagnostics["limit_reached"] = payload.get("limit") is not None and len(rows) >= int(payload.get("limit") or 0)
         diagnostics["truncation_detected"] = bool(total_rows is not None and int(total_rows) != len(rows))
-        if diagnostics["limit_reached"] or diagnostics["truncation_detected"]:
+        if (diagnostics["limit_reached"] or diagnostics["truncation_detected"]) and not allow_truncated:
             diagnostics["response_body"] = "download appears capped or truncated"
             return [], {"error": diagnostics}
+        if diagnostics["limit_reached"] or diagnostics["truncation_detected"]:
+            diagnostics["partial_download"] = True
         return rows, {"payload": payload, "diagnostics": diagnostics}
     except (requests.RequestException, zipfile.BadZipFile, OSError, UnicodeDecodeError, csv.Error) as exc:
         diagnostics["response_body"] = str(exc)
