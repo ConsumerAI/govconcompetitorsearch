@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import date
 import time
@@ -13,8 +14,10 @@ from .analysis import analyze, contractor_detail, filter_transactions
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
 from .option_index import (
     LOOKUP_TIMEOUT_SECONDS,
+    OptionIndexError,
     component_option_values,
     get_agency_options,
+    index_deployment_diagnostics,
     index_freshness,
     location_option_values,
     naics_option_values,
@@ -26,6 +29,9 @@ from .usaspending import fetch_transactions_for_snapshot
 from .utils import decode_option, format_full_money, format_money, format_option, format_percent
 
 UNAVAILABLE = "Unable to load options"
+INDEX_DEPLOYMENT_ERROR = (
+    "Competitor filters are temporarily unavailable because the option index was not included in this deployment."
+)
 
 
 def init_streamlit_state() -> None:
@@ -361,7 +367,17 @@ def _option_diagnostic_errors(diagnostics: dict) -> dict:
 
 
 def render_filters() -> tuple[FilterSnapshot, bool, dict]:
-    validate_index()
+    try:
+        validate_index()
+    except OptionIndexError as exc:
+        diagnostics = index_deployment_diagnostics()
+        diagnostics["error"] = str(exc)
+        logging.getLogger(__name__).error("Option index validation failed: %s", diagnostics)
+        st.error(INDEX_DEPLOYMENT_ERROR)
+        with st.expander("Developer diagnostics", expanded=False):
+            st.json(diagnostics)
+        current: FilterSnapshot = st.session_state.pending_snapshot
+        return current, False, {"index": diagnostics}
     freshness = index_freshness()
     st.session_state.option_index_refresh_needed = bool(freshness.get("is_stale"))
     agencies = [record["agency_name"] for record in get_agency_options()]

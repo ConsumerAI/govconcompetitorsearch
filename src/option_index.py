@@ -18,7 +18,11 @@ from .utils import clean_text, encode_option, format_option
 
 
 SCHEMA_VERSION = "2"
-INDEX_PATH = Path(__file__).resolve().parents[1] / "data" / "option_index.sqlite"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "option_index.sqlite"
+INDEX_PATH = DEFAULT_INDEX_PATH
+LFS_POINTER_PREFIX = "version https://git-lfs.github.com/spec/v1"
+SQLITE_HEADER = b"SQLite format 3\x00"
 SOURCE_PERIOD_START = "2020-10-01"
 LOOKUP_TIMEOUT_SECONDS = 5.0
 INDEX_MAX_AGE_DAYS = 90
@@ -658,9 +662,47 @@ def _require_columns(conn: sqlite3.Connection, table: str, required: set[str]) -
         raise OptionIndexError(f"{table} missing columns: {', '.join(sorted(missing))}")
 
 
+def _is_git_lfs_pointer(path: Path) -> bool:
+    try:
+        prefix = path.read_text(encoding="utf-8", errors="ignore")[:64]
+    except OSError:
+        return False
+    return prefix.startswith(LFS_POINTER_PREFIX)
+
+
+def index_deployment_diagnostics(index_path: Path = INDEX_PATH) -> dict:
+    parent = index_path.parent
+    parent_contents: list[str] = []
+    if parent.exists():
+        parent_contents = sorted(item.name for item in parent.iterdir())
+    schema_version: str | None = None
+    if index_path.exists() and not _is_git_lfs_pointer(index_path):
+        try:
+            with _open(index_path) as conn:
+                meta = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM metadata")}
+            schema_version = meta.get("schema_version")
+        except (sqlite3.Error, OptionIndexError) as exc:
+            schema_version = f"error: {exc}"
+    return {
+        "resolved_index_path": str(index_path),
+        "project_root": str(PROJECT_ROOT),
+        "current_working_directory": os.getcwd(),
+        "file_exists": index_path.exists(),
+        "is_git_lfs_pointer": _is_git_lfs_pointer(index_path) if index_path.exists() else False,
+        "file_size_bytes": index_path.stat().st_size if index_path.exists() else None,
+        "parent_directory_contents": parent_contents,
+        "schema_version": schema_version,
+    }
+
+
 def validate_index(index_path: Path = INDEX_PATH) -> None:
     if not index_path.exists():
         raise OptionIndexError(f"Option index not found: {index_path}")
+    if _is_git_lfs_pointer(index_path):
+        raise OptionIndexError(f"Option index is a Git LFS pointer, not a SQLite database: {index_path}")
+    header = index_path.read_bytes()[:16]
+    if header != SQLITE_HEADER:
+        raise OptionIndexError(f"Option index is not a valid SQLite database: {index_path}")
     with _open(index_path) as conn:
         meta = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM metadata")}
         if meta.get("schema_version") != SCHEMA_VERSION:

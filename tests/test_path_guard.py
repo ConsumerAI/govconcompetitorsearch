@@ -56,6 +56,7 @@ class PathGuardTests(unittest.TestCase):
             "zipfile",
             "hashlib",
             "json",
+            "logging",
             "concurrent",
             "contextlib",
             "os",

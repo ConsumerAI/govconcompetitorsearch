@@ -7,7 +7,13 @@ __pycache__/
 *.log
 *.tmp
 tmp/
-data/
+data/*
+!data/option_index.sqlite
+data/option_index.next.sqlite
+data/*.tmp
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
 runs/
 uploads/
 
