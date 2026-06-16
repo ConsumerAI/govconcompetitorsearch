@@ -29,7 +29,6 @@ from .usaspending import fetch_transactions_for_snapshot
 from .utils import decode_option, format_full_money, format_money, format_option, format_percent
 
 UNAVAILABLE = "Unable to load options"
-FUNDING_OFFICE_LOOKUP_TIMEOUT_SECONDS = 90.0
 _RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
 AGENCY_WIDGET_KEY = "filter_agency"
 COMPONENT_WIDGET_KEY = "filter_component"
@@ -348,12 +347,6 @@ def _timeout_message(kind: str, agency: str, component: str = "") -> str:
     return f"Unable to load performance locations for {component or agency}."
 
 
-def _lookup_timeout_seconds(agency: str, kind: str) -> float:
-    if agency and get_agency_component_config(agency)["dimension_type"] == "funding_office" and kind in {"Agency Component", "NAICS"}:
-        return FUNDING_OFFICE_LOOKUP_TIMEOUT_SECONDS
-    return LOOKUP_TIMEOUT_SECONDS
-
-
 def _retry_button_key(cache_key: tuple) -> str:
     return "retry_" + "_".join(str(part).replace(" ", "_").replace("/", "_") for part in cache_key)
 
@@ -442,7 +435,6 @@ def _option_sets(
         loading_text=_loading_message("component", pending.agency),
         timeout_text=_timeout_message("component", pending.agency),
         allow_default_only=True,
-        timeout_seconds=_lookup_timeout_seconds(pending.agency, "Agency Component"),
     )
     diagnostics["component"] = component_diag
     if stop_after == "component":
@@ -457,7 +449,6 @@ def _option_sets(
         loading_text=_loading_message("naics", pending.agency, component),
         timeout_text=_timeout_message("naics", pending.agency, component),
         allow_default_only=True,
-        timeout_seconds=_lookup_timeout_seconds(pending.agency, "NAICS"),
     )
     diagnostics["naics"] = naics_diag
     if stop_after == "naics":

@@ -13,13 +13,11 @@ from typing import Callable
 import pandas as pd
 
 from .agency_components import build_agency_component_options, get_agency_component_config
-from .analysis import filter_transactions, normalize_transactions
+from .analysis import normalize_transactions
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, COUNTRY_NAMES, SET_ASIDE_TYPE_OPTIONS, STATE_OPTIONS
 from .state import FilterSnapshot, default_end_date, default_start_date
 from .usaspending import (
     OPTION_DISCOVERY_DOWNLOAD_LIMIT,
-    agency_record_by_name,
-    fetch_naics_options,
     fetch_scoped_location_options,
     fetch_scoped_set_aside_options,
     fetch_subagencies,
@@ -200,6 +198,29 @@ COMPONENT_FIXTURES = [
     ("General Services Administration", "Federal Acquisition Service"),
 ]
 
+FUNDING_OFFICE_NAME_ALIASES = {
+    ("Department of State", "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS"): {
+        "BUREAU OF INTERNATIONAL NARCOTICS",
+        "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS",
+    },
+}
+
+
+def _canonical_funding_office_name(agency_name: str, component_name: str) -> str:
+    name = clean_text(component_name)
+    for (agency, canonical), aliases in FUNDING_OFFICE_NAME_ALIASES.items():
+        if agency_name == agency and name in {clean_text(alias) for alias in aliases}:
+            return canonical
+    return name
+
+
+def _funding_office_match_names(agency_name: str, component_name: str) -> set[str]:
+    canonical = _canonical_funding_office_name(agency_name, component_name)
+    for (agency, alias_canonical), aliases in FUNDING_OFFICE_NAME_ALIASES.items():
+        if agency_name == agency and canonical == alias_canonical:
+            return {clean_text(alias) for alias in aliases}
+    return {canonical}
+
 
 def _connect(path: Path = INDEX_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
@@ -325,10 +346,15 @@ def _funding_office_component_rows(agency_name: str, transactions: pd.DataFrame)
     config = get_agency_component_config(agency_name)
     options = build_agency_component_options(transactions, agency_name)
     rows = []
+    seen = set()
     for option in options:
-        name = clean_text(option.get("name") or option.get("value"))
+        name = _canonical_funding_office_name(agency_name, clean_text(option.get("name") or option.get("value")))
         if not name or name == ALL_COMPONENTS:
             continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
         rows.append(
             {
                 "agency_name": agency_name,
@@ -342,16 +368,11 @@ def _funding_office_component_rows(agency_name: str, transactions: pd.DataFrame)
 
 def _funding_office_naics_rows(agency_name: str, component_name: str, transactions: pd.DataFrame) -> list[dict]:
     config = get_agency_component_config(agency_name)
-    snapshot = FilterSnapshot(
-        agency=agency_name,
-        component=component_name,
-        naics=ALL_NAICS,
-        set_aside=ALL_SET_ASIDES,
-        location=ALL_LOCATIONS,
-        start_date=default_start_date(),
-        end_date=default_end_date(),
-    )
-    scoped = filter_transactions(transactions, snapshot)
+    canonical = _canonical_funding_office_name(agency_name, component_name)
+    match_names = _funding_office_match_names(agency_name, canonical)
+    scoped = transactions[
+        transactions["funding_office_name"].map(lambda value: clean_text(value) in match_names)
+    ]
     rows = []
     seen = set()
     for record in scoped.to_dict("records"):
@@ -364,7 +385,7 @@ def _funding_office_naics_rows(agency_name: str, component_name: str, transactio
                 "agency_name": agency_name,
                 "component_dimension_type": config["dimension_type"],
                 "component_code": "",
-                "component_name": component_name,
+                "component_name": canonical,
                 "naics_code": code,
                 "naics_description": clean_text(record.get("naics_description")),
                 "set_aside_code": "",
@@ -420,7 +441,7 @@ def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dic
         config = get_agency_component_config(agency)
         if config["dimension_type"] == "funding_office":
             if agency not in funding_office_transactions:
-                frame, tx_diag = _load_agency_option_transactions(agency)
+                frame, tx_diag = _fetch_agency_transactions_for_index_build(agency)
                 if frame.empty:
                     diagnostics["component_source_errors"][agency] = tx_diag.get("error", "no transactions returned for funding-office discovery")
                     discovered_components = _state_component_rows() if agency == "Department of State" else []
@@ -925,20 +946,14 @@ def validate_index(index_path: Path = INDEX_PATH) -> None:
 
 
 _PROCESS_CACHE: dict[tuple, tuple[list[dict], dict]] = {}
-_TRANSACTION_OPTION_CACHE: dict[str, pd.DataFrame] = {}
 
 
 def clear_process_cache() -> None:
     _PROCESS_CACHE.clear()
-    _TRANSACTION_OPTION_CACHE.clear()
 
 
-def _load_agency_option_transactions(agency_name: str) -> tuple[pd.DataFrame, dict]:
+def _fetch_agency_transactions_for_index_build(agency_name: str) -> tuple[pd.DataFrame, dict]:
     agency = clean_text(agency_name)
-    cached = _TRANSACTION_OPTION_CACHE.get(agency)
-    if cached is not None:
-        return cached.copy(), {"cache_level_used": "process_transactions", "rows_returned": len(cached)}
-
     snapshot = FilterSnapshot(
         agency=agency,
         component=ALL_COMPONENTS,
@@ -950,86 +965,15 @@ def _load_agency_option_transactions(agency_name: str) -> tuple[pd.DataFrame, di
     )
     rows, diag = fetch_transaction_download_rows(
         snapshot,
-        max_elapsed=45.0,
+        max_elapsed=120.0,
         allow_truncated=True,
         download_limit=OPTION_DISCOVERY_DOWNLOAD_LIMIT,
     )
     if diag.get("error") and not rows:
-        return pd.DataFrame(), {"cache_level_used": "live_transactions", "error": diag["error"]}
+        return pd.DataFrame(), diag
     frame = normalize_transactions(rows, default_agency=agency)
-    _TRANSACTION_OPTION_CACHE[agency] = frame
     diagnostics = diag.get("diagnostics") or {}
-    return frame.copy(), {
-        "cache_level_used": "live_transactions",
-        "rows_returned": len(frame),
-        "partial_download": diagnostics.get("partial_download"),
-    }
-
-
-def _transaction_component_option_values(agency_name: str) -> tuple[list[str], dict]:
-    frame, diag = _load_agency_option_transactions(agency_name)
-    if frame.empty:
-        return [ALL_COMPONENTS], {**diag, "lookup_type": "Agency Component", "rows_returned": 0}
-    options = build_agency_component_options(frame, agency_name)
-    values = [option["value"] for option in options]
-    return values, {
-        **diag,
-        "lookup_type": "Agency Component",
-        "rows_returned": max(0, len(values) - 1),
-    }
-
-
-def _transaction_naics_option_values(agency_name: str, component_value: str | None) -> tuple[list[str], dict]:
-    component = clean_text(component_value) or ALL_COMPONENTS
-    frame, diag = _load_agency_option_transactions(agency_name)
-    if frame.empty:
-        return [ALL_NAICS], {**diag, "lookup_type": "NAICS", "rows_returned": 0}
-    snapshot = FilterSnapshot(
-        agency=agency_name,
-        component=component,
-        naics=ALL_NAICS,
-        set_aside=ALL_SET_ASIDES,
-        location=ALL_LOCATIONS,
-        start_date=default_start_date(),
-        end_date=default_end_date(),
-    )
-    scoped = filter_transactions(frame, snapshot)
-    values: dict[str, str] = {}
-    for row in scoped.to_dict("records"):
-        code = clean_text(row.get("naics_code"))
-        if not code:
-            continue
-        description = clean_text(row.get("naics_description"))
-        values[code] = encode_option(code, description)
-    encoded = sorted(values.values(), key=lambda option: format_option(option).lower())
-    return [ALL_NAICS] + encoded, {
-        **diag,
-        "lookup_type": "NAICS",
-        "rows_returned": len(encoded),
-    }
-
-
-def _live_subagency_component_option_values(agency_name: str, base_diag: dict) -> tuple[list[str], dict]:
-    agencies = get_agency_options()
-    record = agency_record_by_name(agencies, agency_name)
-    names = fetch_subagencies(clean_text(record.get("toptier_code")))
-    return [ALL_COMPONENTS] + names, {
-        **base_diag,
-        "lookup_type": "Agency Component",
-        "cache_level_used": "live_api",
-        "rows_returned": len(names),
-    }
-
-
-def _live_naics_option_values(agency_name: str, component_value: str | None, base_diag: dict) -> tuple[list[str], dict]:
-    snapshot = option_discovery_snapshot(agency_name, component_value, None)
-    options, live_diag = fetch_naics_options(snapshot)
-    return options, {
-        **base_diag,
-        **live_diag,
-        "lookup_type": "NAICS",
-        "cache_level_used": "live_api",
-    }
+    return frame, {"rows_returned": len(frame), "partial_download": diagnostics.get("partial_download")}
 
 
 def _cached_lookup(cache_key: tuple, query: Callable[[], list[dict]]) -> tuple[list[dict], dict]:
@@ -1184,24 +1128,22 @@ def get_location_options_with_diagnostics(agency_name: str, component_value: str
 
 
 def component_option_values(agency_name: str) -> tuple[list[str], dict]:
-    config = get_agency_component_config(agency_name)
-    if config["dimension_type"] == "funding_office":
-        return _transaction_component_option_values(agency_name)
     rows, diag = get_component_options_with_diagnostics(agency_name)
-    values = [ALL_COMPONENTS] + [row["component_name"] for row in rows]
-    if len(values) <= 1:
-        return _live_subagency_component_option_values(agency_name, diag)
+    seen = set()
+    values = [ALL_COMPONENTS]
+    for row in rows:
+        name = row["component_name"]
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(name)
     return values, {**diag, "lookup_type": "Agency Component"}
 
 
 def naics_option_values(agency_name: str, component_value: str | None) -> tuple[list[str], dict]:
-    config = get_agency_component_config(agency_name)
-    if config["dimension_type"] == "funding_office":
-        return _transaction_naics_option_values(agency_name, component_value)
     rows, diag = get_naics_options_with_diagnostics(agency_name, component_value)
     values = [encode_option(row["naics_code"], row["naics_description"]) for row in rows]
-    if not values:
-        return _live_naics_option_values(agency_name, component_value, diag)
     return [ALL_NAICS] + sorted(values, key=lambda option: format_option(option).lower()), {**diag, "lookup_type": "NAICS"}
 
 

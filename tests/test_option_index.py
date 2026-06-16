@@ -127,76 +127,23 @@ class OptionIndexLookupTests(unittest.TestCase):
         self.assertFalse(mocked_download.called)
         self.assertIn("Bureau of Reclamation", options)
 
-    def test_state_component_lookup_uses_transaction_download(self):
-        rows = [
-            {
-                "awarding_agency_name": "Department of State",
-                "funding_agency_name": "Department of State",
-                "funding_office_name": "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS",
-                "naics_code": "541611",
-                "naics_description": "Administrative Management and General Management Consulting Services",
-            },
-            {
-                "awarding_agency_name": "Department of State",
-                "funding_agency_name": "Department of Homeland Security",
-                "funding_office_name": "OFFICE OF INTERNATIONAL AFFAIRS",
-                "naics_code": "541990",
-                "naics_description": "All Other Professional, Scientific, and Technical Services",
-            },
-        ]
-        with patch("src.option_index.fetch_transaction_download_rows") as mocked_download:
-            mocked_download.return_value = (rows, {"diagnostics": {}})
-            clear_process_cache()
-            options, diag = component_option_values("Department of State")
-        mocked_download.assert_called_once()
+    def test_state_component_lookup_uses_local_index(self):
+        with patch("src.usaspending.fetch_transaction_download_rows") as mocked_download:
+            options, _diag = self.assertFast(component_option_values, "Department of State")
+        self.assertFalse(mocked_download.called)
         self.assertIn("BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS", options)
-        self.assertNotIn("OFFICE OF INTERNATIONAL AFFAIRS", options)
-        self.assertEqual(diag["lookup_type"], "Agency Component")
 
-    def test_state_naics_lookup_uses_transaction_download(self):
-        rows = [
-            {
-                "awarding_agency_name": "Department of State",
-                "funding_agency_name": "Department of State",
-                "funding_office_name": "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS",
-                "naics_code": "541611",
-                "naics_description": "Administrative Management and General Management Consulting Services",
-            },
-            {
-                "awarding_agency_name": "Department of State",
-                "funding_agency_name": "Department of State",
-                "funding_office_name": "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS",
-                "naics_code": "111110",
-                "naics_description": "Soybean Farming",
-            },
-            {
-                "awarding_agency_name": "Department of State",
-                "funding_agency_name": "Department of State",
-                "funding_office_name": "BUREAU OF COUNTERTERRORISM",
-                "naics_code": "111110",
-                "naics_description": "Soybean Farming",
-            },
-        ]
-        with patch("src.option_index.fetch_transaction_download_rows") as mocked_download:
-            mocked_download.return_value = (rows, {"diagnostics": {}})
-            clear_process_cache()
-            options, diag = naics_option_values(
+    def test_agency_selection_does_not_call_transaction_download(self):
+        with patch("src.usaspending.fetch_transaction_download_rows") as mocked_download:
+            component_option_values("Department of the Treasury")
+            component_option_values("Department of the Interior")
+            component_option_values("Department of State")
+            naics_option_values("Department of the Interior", "Bureau of Reclamation")
+            naics_option_values(
                 "Department of State",
                 "BUREAU OF INTERNATIONAL NARCOTICS AND LAW ENFORCEMENT AFFAIRS",
             )
-        self.assertIn("541611||Administrative Management and General Management Consulting Services", options)
-        self.assertIn("111110||Soybean Farming", options)
-        self.assertEqual(diag["lookup_type"], "NAICS")
-
-    def test_naics_lookup_falls_back_to_live_api_when_index_is_empty(self):
-        with patch("src.option_index.get_naics_options_with_diagnostics") as mock_index:
-            mock_index.return_value = ([], {"cache_level_used": "persistent_index"})
-            with patch("src.option_index.fetch_naics_options") as mock_live:
-                mock_live.return_value = ([ALL_NAICS, "541611||Administrative Management and General Management Consulting Services"], {"cache_level_used": "live_api"})
-                options, diag = naics_option_values("Department of Labor", "Bureau of Labor Statistics")
-        mock_live.assert_called_once()
-        self.assertIn("541611||Administrative Management and General Management Consulting Services", options)
-        self.assertEqual(diag["cache_level_used"], "live_api")
+        self.assertFalse(mocked_download.called)
 
     def test_treasury_options_do_not_contain_other_agency_components(self):
         values = [row["component_name"] for row in get_component_options("Department of the Treasury")]
