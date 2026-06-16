@@ -29,6 +29,9 @@ from .usaspending import fetch_transactions_for_snapshot
 from .utils import decode_option, format_full_money, format_money, format_option, format_percent
 
 UNAVAILABLE = "Unable to load options"
+AGENCY_WIDGET_KEY = "filter_agency"
+COMPONENT_WIDGET_KEY = "filter_component"
+NAICS_WIDGET_KEY = "filter_naics"
 INDEX_DEPLOYMENT_ERROR = (
     "Competitor filters are temporarily unavailable because the option index was not included in this deployment."
 )
@@ -123,11 +126,6 @@ def styles() -> None:
             border-radius: 0 8px 8px 0;
         }
         div[data-testid="stVerticalBlockBorderWrapper"].filter-guide-active {
-            border-color: rgba(59, 130, 246, .72) !important;
-            background: rgba(59, 130, 246, .06) !important;
-            box-shadow: 0 0 0 1px rgba(59, 130, 246, .18), 0 12px 28px rgba(59, 130, 246, .12);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.filter-guide-caption) {
             border-color: rgba(59, 130, 246, .72) !important;
             background: rgba(59, 130, 246, .06) !important;
             box-shadow: 0 0 0 1px rgba(59, 130, 246, .18), 0 12px 28px rgba(59, 130, 246, .12);
@@ -257,7 +255,20 @@ def _filter_guide_step(
 
 
 def _submit_guide_active(guide_step: str) -> bool:
-    return guide_step in {"naics", "submit"}
+    return guide_step == "submit"
+
+
+def _init_filter_widget(key: str, value: str) -> str:
+    if key not in st.session_state:
+        st.session_state[key] = value
+    return st.session_state[key]
+
+
+def _widget_value(key: str, fallback: str = "") -> str:
+    value = st.session_state.get(key, fallback)
+    if value in {UNAVAILABLE, None}:
+        return ""
+    return value or ""
 
 
 def _guide_suppressed(snapshot: FilterSnapshot) -> bool:
@@ -464,21 +475,23 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     if not agency_ok:
         agency_options = [UNAVAILABLE]
     suppress_guide = _guide_suppressed(current)
-    guide_step, guide_hint = _filter_guide_step(
-        current.agency,
-        [ALL_COMPONENTS],
-        current.component,
-        current.naics,
-        agency_ok,
+    agency_live = _init_filter_widget(AGENCY_WIDGET_KEY, current.agency if current.agency in agency_options else "")
+    if agency_live == UNAVAILABLE:
+        agency_live = ""
+        st.session_state[AGENCY_WIDGET_KEY] = ""
+    focus_step, focus_hint = (
+        ("agency", "Start by choosing the agency.")
+        if not agency_live
+        else ("", "")
     )
-    with _guide_container("agency", guide_step, suppressed=suppress_guide):
-        _render_guide_caption("agency", guide_step, guide_hint, suppressed=suppress_guide)
+    with _guide_container("agency", focus_step, suppressed=suppress_guide):
+        _render_guide_caption("agency", focus_step, focus_hint, suppressed=suppress_guide)
         agency = st.selectbox(
             "Agency",
             agency_options,
-            index=_safe_index(agency_options, current.agency),
             format_func=_display_option,
             disabled=not agency_ok,
+            key=AGENCY_WIDGET_KEY,
         )
     if agency == UNAVAILABLE:
         agency = ""
@@ -495,25 +508,31 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     if agency != current.agency:
         st.session_state.component_request_generation += 1
         st.session_state.naics_request_generation += 1
+        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
     component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(temporary_snapshot)
     component_config = get_agency_component_config(agency)
-    component = current.component if current.component in component_options else ALL_COMPONENTS
-    guide_step, guide_hint = _filter_guide_step(
+    component_default = current.component if current.component in component_options else ALL_COMPONENTS
+    component_live = _init_filter_widget(COMPONENT_WIDGET_KEY, component_default)
+    if component_live not in component_options:
+        component_live = ALL_COMPONENTS
+        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+    focus_step, focus_hint = _filter_guide_step(
         agency,
         component_options,
-        component,
-        current.naics,
+        component_live,
+        _widget_value(NAICS_WIDGET_KEY, current.naics),
         agency_ok and component_options != [UNAVAILABLE],
         component_label=component_config["label"],
     )
-    with _guide_container("component", guide_step, suppressed=suppress_guide):
-        _render_guide_caption("component", guide_step, guide_hint, suppressed=suppress_guide)
+    with _guide_container("component", focus_step, suppressed=suppress_guide):
+        _render_guide_caption("component", focus_step, focus_hint, suppressed=suppress_guide)
         component = st.selectbox(
             component_config["label"],
             component_options,
-            index=_safe_index(component_options, component),
             format_func=_display_option,
             disabled=component_options == [UNAVAILABLE],
+            key=COMPONENT_WIDGET_KEY,
         )
     if component == UNAVAILABLE:
         component = ALL_COMPONENTS
@@ -529,27 +548,32 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     )
     if component != current.component:
         st.session_state.naics_request_generation += 1
+        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
     component_options, naics_options, set_asides, location_options, diagnostics = _option_sets(refreshed_snapshot)
-    naics = current.naics if current.naics in naics_options else ALL_NAICS
+    naics_default = current.naics if current.naics in naics_options else ALL_NAICS
+    naics_live = _init_filter_widget(NAICS_WIDGET_KEY, naics_default)
+    if naics_live not in naics_options:
+        naics_live = ALL_NAICS
+        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
     options_ready = bool(
         not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
     )
-    guide_step, guide_hint = _filter_guide_step(
+    focus_step, focus_hint = _filter_guide_step(
         agency,
         component_options,
         component,
-        naics,
+        naics_live,
         options_ready,
         component_label=component_config["label"],
     )
-    with _guide_container("naics", guide_step, suppressed=suppress_guide):
-        _render_guide_caption("naics", guide_step, guide_hint, suppressed=suppress_guide)
+    with _guide_container("naics", focus_step, suppressed=suppress_guide):
+        _render_guide_caption("naics", focus_step, focus_hint, suppressed=suppress_guide)
         naics = st.selectbox(
             "NAICS",
             naics_options,
-            index=_safe_index(naics_options, naics),
             format_func=_display_option,
             disabled=naics_options == [UNAVAILABLE],
+            key=NAICS_WIDGET_KEY,
         )
     if naics == UNAVAILABLE:
         naics = ALL_NAICS

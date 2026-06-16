@@ -90,7 +90,7 @@ class UiLayoutTests(unittest.TestCase):
         )
         self.assertEqual(step, "naics")
         self.assertIn("Find Competitors", hint)
-        self.assertTrue(ui._submit_guide_active(step))
+        self.assertFalse(ui._submit_guide_active(step))
 
     def test_filter_guide_does_not_include_dates_step(self):
         source = inspect.getsource(ui._filter_guide_step)
