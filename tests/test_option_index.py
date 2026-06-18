@@ -178,25 +178,23 @@ class OptionIndexLookupTests(unittest.TestCase):
         self.assertEqual(set_asides[0]["set_aside_code"], "WOSB")
         self.assertIn("IRQ - Iraq", locations)
 
-    def test_set_aside_option_values_use_scoped_live_api_when_index_is_empty(self):
+    def test_set_aside_option_values_are_index_only(self):
         with patch("src.option_index.fetch_scoped_set_aside_options") as mock_fetch:
-            mock_fetch.return_value = (["All Set-Aside Types", "SBA - Small Business Set-Aside"], {"cache_level_used": "live_api"})
             options, diag = set_aside_option_values("Department of Defense", "Department of the Army", "541611")
-        mock_fetch.assert_called_once()
-        self.assertEqual(options[1], "SBA - Small Business Set-Aside")
-        self.assertEqual(diag["cache_level_used"], "live_api")
+        mock_fetch.assert_not_called()
+        self.assertEqual(options[0], ALL_SET_ASIDES)
+        self.assertEqual(diag["lookup_type"], "Set-Aside")
 
-    def test_location_option_values_use_scoped_live_api_when_index_is_empty(self):
+    def test_location_option_values_are_index_only(self):
         with patch("src.option_index.fetch_scoped_location_options") as mock_fetch:
-            mock_fetch.return_value = (["All Locations", "VA - Virginia"], {"cache_level_used": "live_api"})
             options, diag = location_option_values("Department of Defense", "Department of the Army", "541611", "")
-        mock_fetch.assert_called_once()
-        self.assertIn("VA - Virginia", options)
-        self.assertEqual(diag["cache_level_used"], "live_api")
+        mock_fetch.assert_not_called()
+        self.assertEqual(options[0], ALL_LOCATIONS)
+        self.assertEqual(diag["lookup_type"], "Performance Location")
 
     def test_index_metadata_is_validated(self):
         meta = metadata()
-        self.assertEqual(meta["schema_version"], "2")
+        self.assertEqual(meta["schema_version"], "3")
         self.assertEqual(meta["source_period_start"], "2020-10-01")
         self.assertIn("row_counts", meta)
 

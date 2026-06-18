@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from src.option_index import INDEX_PATH, MAJOR_REQUIRED_AGENCIES, completeness_report, metadata, refresh_index_atomically, validate_index
+from src.option_index import BUILD_PROGRESS_PATH, INDEX_PATH, MAJOR_REQUIRED_AGENCIES, completeness_report, metadata, refresh_index_atomically, validate_index
 
 
 def main() -> None:
+    print(f"Build progress will be written to: {BUILD_PROGRESS_PATH}", flush=True)
+    print("Monitor with: python -m scripts.show_build_progress", flush=True)
     path = refresh_index_atomically(INDEX_PATH)
     validate_index(path)
     meta = metadata(path)
     report = completeness_report(path)
-    print(f"Refreshed option index: {path}")
+    print(f"Refreshed option index: {path}", flush=True)
     print(f"schema_version={meta.get('schema_version')}")
     print(f"source_period_start={meta.get('source_period_start')}")
     print(f"source_period_end={meta.get('source_period_end')}")

@@ -83,6 +83,13 @@ DOWNLOAD_TRANSACTION_COLUMNS = [
     "funding_office_name",
 ]
 
+OPTION_INDEX_DOWNLOAD_COLUMNS = [
+    *DOWNLOAD_TRANSACTION_COLUMNS,
+    "type_of_set_aside",
+    "primary_place_of_performance_country_code",
+    "primary_place_of_performance_state_code",
+]
+
 
 @dataclass(frozen=True)
 class ApiFailure:
@@ -164,24 +171,20 @@ def agency_record_by_name(agency_records: list[dict], agency_name: str) -> dict:
     return {}
 
 
-@functools.lru_cache(maxsize=256)
-def fetch_subagencies(toptier_code: str, fiscal_year: int | None = None) -> list[str]:
+def _fetch_subagencies_uncached(toptier_code: str, fiscal_year: int | None = None) -> list[str]:
     if not toptier_code:
         return []
     all_results = []
     page = 1
-    try:
-        while True:
-            payload = _get(
-                f"/api/v2/agency/{toptier_code}/sub_agency/",
-                {"fiscal_year": int(fiscal_year or current_fiscal_year()), "page": page},
-            )
-            all_results.extend(payload.get("results") or [])
-            if not (payload.get("page_metadata") or {}).get("hasNext"):
-                break
-            page += 1
-    except (requests.RequestException, ValueError, TypeError):
-        return []
+    while True:
+        payload = _get(
+            f"/api/v2/agency/{toptier_code}/sub_agency/",
+            {"fiscal_year": int(fiscal_year or current_fiscal_year()), "page": page},
+        )
+        all_results.extend(payload.get("results") or [])
+        if not (payload.get("page_metadata") or {}).get("hasNext"):
+            break
+        page += 1
     names = []
     for item in all_results:
         if isinstance(item, str):
@@ -203,6 +206,28 @@ def fetch_subagencies(toptier_code: str, fiscal_year: int | None = None) -> list
             )
         )
     return sorted({name for name in names if name})
+
+
+_SUBAGENCY_CACHE: dict[tuple[str, int], list[str]] = {}
+
+
+def fetch_subagencies(toptier_code: str, fiscal_year: int | None = None) -> list[str]:
+    if not toptier_code:
+        return []
+    fy = int(fiscal_year or current_fiscal_year())
+    cache_key = (toptier_code, fy)
+    if cache_key in _SUBAGENCY_CACHE:
+        return _SUBAGENCY_CACHE[cache_key]
+    for attempt in range(3):
+        try:
+            names = _fetch_subagencies_uncached(toptier_code, fy)
+            if names:
+                _SUBAGENCY_CACHE[cache_key] = names
+                return names
+        except (requests.RequestException, ValueError, TypeError):
+            pass
+        time.sleep(1.5 * (attempt + 1))
+    return []
 
 
 def current_fiscal_year() -> int:
@@ -251,11 +276,27 @@ def federal_fiscal_year_segments(start_date: str, end_date: str) -> list[dict]:
     return segments
 
 
-def agency_filter(agency_name: str, component: str = ALL_COMPONENTS) -> list[dict]:
+def agency_filter(
+    agency_name: str,
+    component: str = ALL_COMPONENTS,
+    *,
+    subtier_filter_type: str | None = None,
+) -> list[dict]:
     config = get_agency_component_config(agency_name)
-    if component and component != ALL_COMPONENTS and config["dimension_type"] == "awarding_subagency":
-        return [{"type": "awarding", "tier": "subtier", "name": clean_text(component), "toptier_name": clean_text(agency_name)}]
-    return [{"type": "awarding", "tier": "toptier", "name": clean_text(agency_name)}]
+    agency = clean_text(agency_name)
+    component_value = clean_text(component)
+    if component_value and component_value != ALL_COMPONENTS:
+        if config["dimension_type"] == "awarding_subagency":
+            filter_type = clean_text(subtier_filter_type) or None
+            if not filter_type:
+                from .option_index import lookup_subtier_filter_type
+
+                filter_type = lookup_subtier_filter_type(agency, component_value)
+            if filter_type == "dual":
+                return [{"type": "awarding", "tier": "toptier", "name": agency}]
+            tier_type = "funding" if filter_type == "funding" else "awarding"
+            return [{"type": tier_type, "tier": "subtier", "name": component_value, "toptier_name": agency}]
+    return [{"type": "awarding", "tier": "toptier", "name": agency}]
 
 
 def option_code(option: str) -> str:
@@ -271,9 +312,9 @@ def location_filter(location: str) -> dict | None:
     return {"country": code}
 
 
-def base_filters(snapshot: FilterSnapshot) -> dict:
+def base_filters(snapshot: FilterSnapshot, *, subtier_filter_type: str | None = None) -> dict:
     filters = {
-        "agencies": agency_filter(snapshot.agency, snapshot.component),
+        "agencies": agency_filter(snapshot.agency, snapshot.component, subtier_filter_type=subtier_filter_type),
         "award_type_codes": AWARD_TYPE_CODES,
         "award_or_idv_flag": AWARD_OR_IDV_FLAG,
         "time_period": [{"start_date": snapshot.start_date, "end_date": snapshot.end_date}],
@@ -302,15 +343,24 @@ def transaction_payload(snapshot: FilterSnapshot, page: int = 1, limit: int = 10
 OPTION_DISCOVERY_DOWNLOAD_LIMIT = 10000
 
 
-def transaction_download_payload(snapshot: FilterSnapshot, limit: int | None = None) -> dict:
+def transaction_download_payload(
+    snapshot: FilterSnapshot,
+    limit: int | None = None,
+    *,
+    columns: list[str] | None = None,
+) -> dict:
     payload = {
         "filters": base_filters(snapshot),
-        "columns": DOWNLOAD_TRANSACTION_COLUMNS,
+        "columns": columns or DOWNLOAD_TRANSACTION_COLUMNS,
         "file_format": "csv",
     }
     if limit is not None:
         payload["limit"] = int(limit)
     return payload
+
+
+def option_index_transaction_download_payload(snapshot: FilterSnapshot, limit: int | None = None) -> dict:
+    return transaction_download_payload(snapshot, limit, columns=OPTION_INDEX_DOWNLOAD_COLUMNS)
 
 
 def snapshot_for_segment(snapshot: FilterSnapshot, segment: dict) -> FilterSnapshot:
@@ -325,13 +375,19 @@ def snapshot_for_segment(snapshot: FilterSnapshot, segment: dict) -> FilterSnaps
     )
 
 
-def category_options_payload(snapshot: FilterSnapshot, category: str, limit: int = 50) -> dict:
+def category_options_payload(
+    snapshot: FilterSnapshot,
+    category: str,
+    limit: int = 50,
+    *,
+    subtier_filter_type: str | None = None,
+) -> dict:
     return {
         "category": category,
         "spending_level": "transactions",
         "limit": limit,
         "page": 1,
-        "filters": base_filters(snapshot),
+        "filters": base_filters(snapshot, subtier_filter_type=subtier_filter_type),
     }
 
 
@@ -484,11 +540,18 @@ def option_discovery_snapshot(
     )
 
 
-def _fetch_category_result_rows(snapshot: FilterSnapshot, category: str, *, max_pages: int = 20, limit: int = 100) -> tuple[list[dict], dict]:
+def _fetch_category_result_rows(
+    snapshot: FilterSnapshot,
+    category: str,
+    *,
+    max_pages: int = 20,
+    limit: int = 100,
+    subtier_filter_type: str | None = None,
+) -> tuple[list[dict], dict]:
     results: list[dict] = []
     payloads: list[dict] = []
     for page in range(1, max_pages + 1):
-        payload = category_options_payload(snapshot, category, limit=limit)
+        payload = category_options_payload(snapshot, category, limit=limit, subtier_filter_type=subtier_filter_type)
         payload["page"] = page
         payloads.append(payload)
         data, failure = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload)
@@ -504,8 +567,13 @@ def _fetch_category_result_rows(snapshot: FilterSnapshot, category: str, *, max_
     return results, {"payloads": payloads, "error": None}
 
 
-def _set_aside_code_has_spending(snapshot: FilterSnapshot, code: str) -> bool:
-    filters = base_filters(snapshot)
+def _set_aside_code_has_spending(
+    snapshot: FilterSnapshot,
+    code: str,
+    *,
+    subtier_filter_type: str | None = None,
+) -> bool:
+    filters = base_filters(snapshot, subtier_filter_type=subtier_filter_type)
     filters["set_aside_type_codes"] = [code]
     payload = {
         "category": "country",
@@ -537,6 +605,26 @@ def _scoped_location_values(country_rows: list[dict], state_rows: list[dict]) ->
         name = clean_text(item.get("name")) or COUNTRY_NAMES.get(code, code)
         values[code] = f"{code} - {name}"
     return values
+
+
+def _fetch_scoped_set_aside_options_uncached(
+    snapshot: FilterSnapshot,
+    *,
+    subtier_filter_type: str | None = None,
+) -> tuple[list[str], dict]:
+    codes: list[str] = []
+    for code in SET_ASIDE_TYPE_OPTIONS:
+        if _set_aside_code_has_spending(snapshot, code, subtier_filter_type=subtier_filter_type):
+            codes.append(code)
+    values = [
+        f"{code} - {SET_ASIDE_TYPE_OPTIONS[code]}"
+        for code in sorted(codes, key=lambda value: SET_ASIDE_TYPE_OPTIONS[value].lower())
+    ]
+    return [ALL_SET_ASIDES] + values, {
+        "lookup_type": "Set-Aside",
+        "cache_level_used": "live_api",
+        "rows_returned": len(values),
+    }
 
 
 @functools.lru_cache(maxsize=128)
@@ -576,7 +664,13 @@ def fetch_scoped_set_aside_options_cached(
     }
 
 
-def fetch_scoped_set_aside_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
+def fetch_scoped_set_aside_options(
+    snapshot: FilterSnapshot,
+    *,
+    subtier_filter_type: str | None = None,
+) -> tuple[list[str], dict]:
+    if subtier_filter_type:
+        return _fetch_scoped_set_aside_options_uncached(snapshot, subtier_filter_type=subtier_filter_type)
     options, diag = fetch_scoped_set_aside_options_cached(
         snapshot.agency,
         snapshot.component,
@@ -586,6 +680,37 @@ def fetch_scoped_set_aside_options(snapshot: FilterSnapshot) -> tuple[list[str],
         query_fingerprint(snapshot, option_category="set_aside"),
     )
     return list(options), diag
+
+
+def _fetch_scoped_location_options_uncached(
+    snapshot: FilterSnapshot,
+    *,
+    subtier_filter_type: str | None = None,
+) -> tuple[list[str], dict]:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        country_future = executor.submit(
+            _fetch_category_result_rows,
+            snapshot,
+            "country",
+            subtier_filter_type=subtier_filter_type,
+        )
+        state_future = executor.submit(
+            _fetch_category_result_rows,
+            snapshot,
+            "state_territory",
+            subtier_filter_type=subtier_filter_type,
+        )
+        country_rows, country_diag = country_future.result()
+        state_rows, state_diag = state_future.result()
+    values = _scoped_location_values(country_rows, state_rows)
+    options = [ALL_LOCATIONS] + [values[key] for key in sorted(values)]
+    error = country_diag.get("error") or state_diag.get("error")
+    return options, {
+        "lookup_type": "Performance Location",
+        "cache_level_used": "live_api",
+        "rows_returned": max(0, len(options) - 1),
+        "error": error,
+    }
 
 
 @functools.lru_cache(maxsize=128)
@@ -623,7 +748,13 @@ def fetch_scoped_location_options_cached(
     }
 
 
-def fetch_scoped_location_options(snapshot: FilterSnapshot) -> tuple[list[str], dict]:
+def fetch_scoped_location_options(
+    snapshot: FilterSnapshot,
+    *,
+    subtier_filter_type: str | None = None,
+) -> tuple[list[str], dict]:
+    if subtier_filter_type:
+        return _fetch_scoped_location_options_uncached(snapshot, subtier_filter_type=subtier_filter_type)
     options, diag = fetch_scoped_location_options_cached(
         snapshot.agency,
         snapshot.component,
@@ -673,9 +804,10 @@ def fetch_transaction_download_rows(
     max_elapsed: float = 75.0,
     allow_truncated: bool = False,
     download_limit: int | None = OPTION_DISCOVERY_DOWNLOAD_LIMIT,
+    columns: list[str] | None = None,
 ) -> tuple[list[dict], dict]:
     endpoint = "/api/v2/download/transactions/"
-    payload = transaction_download_payload(snapshot, limit=download_limit)
+    payload = transaction_download_payload(snapshot, limit=download_limit, columns=columns)
     diagnostics = {
         "endpoint": endpoint,
         "method": "POST",
@@ -894,7 +1026,8 @@ def fetch_transactions_cached(
 
 def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
     api_snapshot = snapshot
-    if get_agency_component_config(snapshot.agency)["dimension_type"] == "funding_office":
+    config = get_agency_component_config(snapshot.agency)
+    if config["dimension_type"] == "funding_office":
         api_snapshot = FilterSnapshot(
             agency=snapshot.agency,
             component=ALL_COMPONENTS,
@@ -904,6 +1037,19 @@ def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=
             start_date=snapshot.start_date,
             end_date=snapshot.end_date,
         )
+    elif snapshot.component != ALL_COMPONENTS and config["dimension_type"] == "awarding_subagency":
+        from .option_index import lookup_subtier_filter_type
+
+        if lookup_subtier_filter_type(snapshot.agency, snapshot.component) == "dual":
+            api_snapshot = FilterSnapshot(
+                agency=snapshot.agency,
+                component=ALL_COMPONENTS,
+                naics=snapshot.naics,
+                set_aside=snapshot.set_aside,
+                location=snapshot.location,
+                start_date=snapshot.start_date,
+                end_date=snapshot.end_date,
+            )
     args = (
         api_snapshot.agency,
         api_snapshot.component,

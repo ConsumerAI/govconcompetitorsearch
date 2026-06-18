@@ -12,24 +12,33 @@ from typing import Callable
 
 import pandas as pd
 
-from .agency_components import build_agency_component_options, get_agency_component_config
+from .agency_components import (
+    build_agency_component_options,
+    get_agency_component_config,
+    infer_subtier_filter_type,
+    transaction_component_names,
+    transaction_matches_component,
+)
 from .analysis import normalize_transactions
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, COUNTRY_NAMES, SET_ASIDE_TYPE_OPTIONS, STATE_OPTIONS
 from .state import FilterSnapshot, default_end_date, default_start_date
 from .usaspending import (
     OPTION_DISCOVERY_DOWNLOAD_LIMIT,
-    fetch_scoped_location_options,
+    OPTION_INDEX_DOWNLOAD_COLUMNS,
+    _fetch_category_result_rows,
     fetch_scoped_set_aside_options,
+    fetch_scoped_location_options,
     fetch_subagencies,
     fetch_toptier_agencies,
     fetch_transaction_download_rows,
     option_discovery_snapshot,
+    option_code,
     post_usaspending,
 )
 from .utils import clean_text, encode_option, format_option
 
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "option_index.sqlite"
 INDEX_PATH = DEFAULT_INDEX_PATH
@@ -40,10 +49,37 @@ LOOKUP_TIMEOUT_SECONDS = 5.0
 INDEX_MAX_AGE_DAYS = 90
 MIN_BROAD_AGENCY_COUNT = 40
 MAX_MAJOR_ZERO_COMPONENTS = 0
+BUILD_PROGRESS_PATH = PROJECT_ROOT / "data" / "option_index_build.progress.json"
+OPTIONAL_ENRICHMENT_MAX_SCOPES = 8000
 
 
 class OptionIndexError(RuntimeError):
     pass
+
+
+def _update_build_progress(phase: str, message: str = "", **fields) -> None:
+    payload = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "phase": phase,
+        "message": message,
+        **fields,
+    }
+    BUILD_PROGRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = BUILD_PROGRESS_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp_path, BUILD_PROGRESS_PATH)
+    line = message or phase
+    if "current" in fields and "total" in fields:
+        line = f"{line} ({fields['current']}/{fields['total']})"
+    print(f"[option-index] {line}", flush=True)
+
+
+def _start_build_progress() -> None:
+    _update_build_progress("starting", "Option index build started")
+
+
+def _finish_build_progress(status: str, message: str = "", **fields) -> None:
+    _update_build_progress(status, message, **fields)
 
 
 SEED_ROWS = [
@@ -279,22 +315,35 @@ def _fixture_source_rows() -> list[dict]:
     return rows
 
 
-def _agency_filters(agency_name: str, component_name: str | None = None) -> list[dict]:
+def _agency_filters(
+    agency_name: str,
+    component_name: str | None = None,
+    *,
+    subtier_type: str = "awarding",
+) -> list[dict]:
     config = get_agency_component_config(agency_name)
     component = clean_text(component_name)
     if component and config["dimension_type"] == "awarding_subagency":
-        return [{"type": "awarding", "tier": "subtier", "name": component, "toptier_name": clean_text(agency_name)}]
+        return [{"type": subtier_type, "tier": "subtier", "name": component, "toptier_name": clean_text(agency_name)}]
     return [{"type": "awarding", "tier": "toptier", "name": clean_text(agency_name)}]
 
 
-def _category_payload(agency_name: str, component_name: str | None, category: str, page: int, limit: int = 100) -> dict:
+def _category_payload(
+    agency_name: str,
+    component_name: str | None,
+    category: str,
+    page: int,
+    limit: int = 100,
+    *,
+    subtier_type: str = "awarding",
+) -> dict:
     return {
         "category": category,
         "spending_level": "transactions",
         "limit": limit,
         "page": page,
         "filters": {
-            "agencies": _agency_filters(agency_name, component_name),
+            "agencies": _agency_filters(agency_name, component_name, subtier_type=subtier_type),
             "award_type_codes": ["A", "B", "C", "D"],
             "award_or_idv_flag": "AWARD",
             "time_period": [{"start_date": SOURCE_PERIOD_START, "end_date": current_source_period_end()}],
@@ -302,11 +351,18 @@ def _category_payload(agency_name: str, component_name: str | None, category: st
     }
 
 
-def _category_options(agency_name: str, component_name: str | None, category: str, max_pages: int = 100) -> tuple[list[dict], dict]:
+def _category_options(
+    agency_name: str,
+    component_name: str | None,
+    category: str,
+    max_pages: int = 100,
+    *,
+    subtier_type: str = "awarding",
+) -> tuple[list[dict], dict]:
     results = []
     payloads = []
     for page in range(1, max_pages + 1):
-        payload = _category_payload(agency_name, component_name, category, page)
+        payload = _category_payload(agency_name, component_name, category, page, subtier_type=subtier_type)
         payloads.append(payload)
         data, failure = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload, timeout=60)
         if failure:
@@ -337,6 +393,7 @@ def _state_component_rows() -> list[dict]:
                 "component_dimension_type": row["component_dimension_type"],
                 "component_code": row["component_code"],
                 "component_name": row["component_name"],
+                "subtier_filter_type": "awarding",
             }
         )
     return rows
@@ -361,45 +418,376 @@ def _funding_office_component_rows(agency_name: str, transactions: pd.DataFrame)
                 "component_dimension_type": config["dimension_type"],
                 "component_code": clean_text(option.get("code")),
                 "component_name": name,
+                "subtier_filter_type": "awarding",
             }
         )
     return rows
 
 
-def _funding_office_naics_rows(agency_name: str, component_name: str, transactions: pd.DataFrame) -> list[dict]:
+def _default_component_row(agency_name: str, config: dict, component_name: str, component_code: str = "") -> dict:
+    return {
+        "agency_name": agency_name,
+        "component_dimension_type": config["dimension_type"],
+        "component_code": clean_text(component_code),
+        "component_name": clean_text(component_name),
+        "subtier_filter_type": "awarding",
+    }
+
+
+def _apply_subtier_filter_types(component_rows: list[dict], agency_transactions: dict[str, pd.DataFrame]) -> None:
+    by_agency: dict[str, list[dict]] = {}
+    for row in component_rows:
+        by_agency.setdefault(row["agency_name"], []).append(row)
+    for agency, rows in by_agency.items():
+        frame = agency_transactions.get(agency, pd.DataFrame())
+        for row in rows:
+            row["subtier_filter_type"] = infer_subtier_filter_type(frame, row["component_name"])
+
+
+def _component_lookup(component_rows: list[dict]) -> dict[str, dict]:
+    lookup: dict[str, dict] = {}
+    for row in component_rows:
+        lookup[row["component_name"].lower()] = row
+    return lookup
+
+
+def _discover_components_from_transactions(agency_name: str, transactions: pd.DataFrame) -> list[dict]:
+    if transactions is None or transactions.empty:
+        return []
     config = get_agency_component_config(agency_name)
-    canonical = _canonical_funding_office_name(agency_name, component_name)
-    match_names = _funding_office_match_names(agency_name, canonical)
-    scoped = transactions[
-        transactions["funding_office_name"].map(lambda value: clean_text(value) in match_names)
-    ]
     rows = []
-    seen = set()
-    for record in scoped.to_dict("records"):
-        code = clean_text(record.get("naics_code"))
-        if not code or code in seen:
+    seen: set[str] = set()
+    for record in transactions.to_dict("records"):
+        if float(record.get("federal_action_obligation") or 0) == 0:
             continue
-        seen.add(code)
-        rows.append(
-            {
-                "agency_name": agency_name,
-                "component_dimension_type": config["dimension_type"],
-                "component_code": "",
-                "component_name": canonical,
-                "naics_code": code,
-                "naics_description": clean_text(record.get("naics_description")),
-                "set_aside_code": "",
-                "set_aside_description": "",
-                "performance_country": "",
-                "performance_state": "",
-                "support_awarding_agency_name": agency_name,
-                "support_funding_agency_name": agency_name,
-            }
-        )
+        for name in transaction_component_names(record, config, agency_name):
+            canonical = (
+                _canonical_funding_office_name(agency_name, name)
+                if config["dimension_type"] == "funding_office"
+                else name
+            )
+            if not canonical or canonical.lower() in seen:
+                continue
+            seen.add(canonical.lower())
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": config["dimension_type"],
+                    "component_code": "",
+                    "component_name": canonical,
+                    "subtier_filter_type": infer_subtier_filter_type(transactions, canonical),
+                }
+            )
     return rows
+
+
+def _source_rows_from_agency_transactions(
+    agency_name: str,
+    component_lookup: dict[str, dict],
+    transactions: pd.DataFrame,
+) -> list[dict]:
+    if transactions is None or transactions.empty or not component_lookup:
+        return []
+
+    config = get_agency_component_config(agency_name)
+    if config["dimension_type"] == "funding_office":
+        if config["field_name"] not in transactions.columns:
+            return []
+    elif "awarding_sub_agency_name" not in transactions.columns and "funding_sub_agency_name" not in transactions.columns:
+        return []
+
+    rows: list[dict] = []
+    seen: set[tuple] = set()
+    descriptions: dict[tuple[str, str], str] = {}
+
+    for record in transactions.to_dict("records"):
+        if float(record.get("federal_action_obligation") or 0) == 0:
+            continue
+        naics_code = clean_text(record.get("naics_code"))
+        if not naics_code:
+            continue
+        naics_description = clean_text(record.get("naics_description"))
+        matched_components: list[tuple[str, dict]] = []
+        for component_meta in component_lookup.values():
+            component_name = component_meta["component_name"]
+            if transaction_matches_component(record, component_name, config, agency_name):
+                matched_components.append((component_name, component_meta))
+        if not matched_components:
+            continue
+
+        set_aside_code, set_aside_description = _normalize_set_aside(record.get("set_aside_type"))
+        country = clean_text(record.get("place_of_performance_country_code")).upper()
+        state = clean_text(record.get("place_of_performance_state_code")).upper()
+
+        for component_name, component_meta in matched_components:
+            descriptions[(component_name, naics_code)] = naics_description or descriptions.get((component_name, naics_code), "")
+            combos = [(component_name, naics_code, "", "", "")]
+            if set_aside_code:
+                combos.append((component_name, naics_code, set_aside_code, "", ""))
+            if country or state:
+                combos.append((component_name, naics_code, set_aside_code, country, state))
+
+            for comp, naics, sa_code, ctry, st in combos:
+                key = (comp, naics, sa_code, ctry, st)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "agency_name": agency_name,
+                        "component_dimension_type": component_meta["component_dimension_type"],
+                        "component_code": component_meta["component_code"],
+                        "component_name": comp,
+                        "naics_code": naics,
+                        "naics_description": descriptions[(comp, naics)],
+                        "set_aside_code": sa_code,
+                        "set_aside_description": set_aside_description if sa_code else "",
+                        "performance_country": ctry,
+                        "performance_state": st,
+                        "support_awarding_agency_name": agency_name,
+                        "support_funding_agency_name": agency_name if config["dimension_type"] == "funding_office" else "",
+                    }
+                )
+    return rows
+
+
+def _subtier_types_for_component(component: dict) -> list[str]:
+    filter_type = clean_text(component.get("subtier_filter_type")) or "awarding"
+    if filter_type == "funding":
+        return ["funding", "awarding"]
+    if filter_type == "dual":
+        return ["awarding", "funding"]
+    return ["awarding", "funding"]
+
+
+def _prioritize_optional_scopes(scopes: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    major = {agency.lower() for agency in MAJOR_REQUIRED_AGENCIES}
+
+    def sort_key(scope: tuple[str, str, str]) -> tuple[int, str, str, str]:
+        agency, component, naics = scope
+        return (0 if agency.lower() in major else 1, agency, component, naics)
+
+    return sorted(scopes, key=sort_key)
+
+
+def _append_source_rows(rows: list[dict], existing_keys: set[tuple], source_rows: list[dict]) -> None:
+    for row in rows:
+        key = (
+            row["component_name"],
+            row["naics_code"],
+            row["set_aside_code"],
+            row["performance_country"],
+            row["performance_state"],
+        )
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        source_rows.append(row)
+
+
+def _category_naics_rows(agency_name: str, component: dict) -> tuple[list[dict], dict | None]:
+    component_name = component["component_name"]
+    subtier_types = _subtier_types_for_component(component)
+    seen_codes: set[str] = set()
+    rows: list[dict] = []
+    last_error = None
+    for subtier_type in subtier_types:
+        if subtier_type in {"dual"}:
+            continue
+        naics_results, diag = _category_options(agency_name, component_name, "naics", subtier_type=subtier_type)
+        if diag.get("error"):
+            last_error = diag["error"]
+            continue
+        for item in naics_results:
+            if float(item.get("amount") or 0) <= 0:
+                continue
+            code = clean_text(item.get("code") or item.get("id"))
+            description = clean_text(item.get("name") or item.get("description"))
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": component["component_dimension_type"],
+                    "component_code": component["component_code"],
+                    "component_name": component_name,
+                    "naics_code": code,
+                    "naics_description": description,
+                    "set_aside_code": "",
+                    "set_aside_description": "",
+                    "performance_country": "",
+                    "performance_state": "",
+                    "support_awarding_agency_name": agency_name,
+                    "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
+                }
+            )
+        if rows:
+            return rows, None
+    if last_error:
+        return [], last_error
+    return rows, None
+
+
+def _enrich_optional_rows_from_api(
+    agency_name: str,
+    component: dict,
+    naics_code: str,
+    existing_keys: set[tuple],
+) -> list[dict]:
+    component_name = component["component_name"]
+    subtier_filter_type = clean_text(component.get("subtier_filter_type")) or "awarding"
+    snapshot = option_discovery_snapshot(agency_name, component_name, naics_code)
+    rows: list[dict] = []
+    set_aside_options, _diag = fetch_scoped_set_aside_options(snapshot, subtier_filter_type=subtier_filter_type)
+    for option in set_aside_options[1:]:
+        set_aside_code = option_code(option)
+        if not set_aside_code:
+            continue
+        _, set_aside_description = _normalize_set_aside(option)
+        base_key = (component_name, naics_code, set_aside_code, "", "")
+        if base_key not in existing_keys:
+            existing_keys.add(base_key)
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": component["component_dimension_type"],
+                    "component_code": component["component_code"],
+                    "component_name": component_name,
+                    "naics_code": naics_code,
+                    "naics_description": "",
+                    "set_aside_code": set_aside_code,
+                    "set_aside_description": set_aside_description,
+                    "performance_country": "",
+                    "performance_state": "",
+                    "support_awarding_agency_name": agency_name,
+                    "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
+                }
+            )
+        snapshot_with_set_aside = option_discovery_snapshot(agency_name, component_name, naics_code, set_aside_code)
+        location_options, _location_diag = fetch_scoped_location_options(
+            snapshot_with_set_aside,
+            subtier_filter_type=subtier_filter_type,
+        )
+        for location in location_options[1:]:
+            loc_code = option_code(location).upper()
+            if len(loc_code) == 2:
+                country, state = "USA", loc_code
+            else:
+                country, state = loc_code, ""
+            loc_key = (component_name, naics_code, set_aside_code, country, state)
+            if loc_key in existing_keys:
+                continue
+            existing_keys.add(loc_key)
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": component["component_dimension_type"],
+                    "component_code": component["component_code"],
+                    "component_name": component_name,
+                    "naics_code": naics_code,
+                    "naics_description": "",
+                    "set_aside_code": set_aside_code,
+                    "set_aside_description": set_aside_description,
+                    "performance_country": country,
+                    "performance_state": state,
+                    "support_awarding_agency_name": agency_name,
+                    "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
+                }
+            )
+    if not set_aside_options[1:]:
+        state_rows, _state_diag = _fetch_category_result_rows(
+            snapshot,
+            "state_territory",
+            max_pages=5,
+            subtier_filter_type=subtier_filter_type,
+        )
+        country_rows, _country_diag = _fetch_category_result_rows(
+            snapshot,
+            "country",
+            max_pages=5,
+            subtier_filter_type=subtier_filter_type,
+        )
+        for item in state_rows:
+            if float(item.get("amount") or 0) <= 0:
+                continue
+            state = clean_text(item.get("code") or item.get("id")).upper()
+            if not state:
+                continue
+            loc_key = (component_name, naics_code, "", "USA", state)
+            if loc_key in existing_keys:
+                continue
+            existing_keys.add(loc_key)
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": component["component_dimension_type"],
+                    "component_code": component["component_code"],
+                    "component_name": component_name,
+                    "naics_code": naics_code,
+                    "naics_description": "",
+                    "set_aside_code": "",
+                    "set_aside_description": "",
+                    "performance_country": "USA",
+                    "performance_state": state,
+                    "support_awarding_agency_name": agency_name,
+                    "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
+                }
+            )
+        for item in country_rows:
+            if float(item.get("amount") or 0) <= 0:
+                continue
+            country = clean_text(item.get("code") or item.get("id")).upper()
+            if not country or country in {"USA", "US"}:
+                continue
+            loc_key = (component_name, naics_code, "", country, "")
+            if loc_key in existing_keys:
+                continue
+            existing_keys.add(loc_key)
+            rows.append(
+                {
+                    "agency_name": agency_name,
+                    "component_dimension_type": component["component_dimension_type"],
+                    "component_code": component["component_code"],
+                    "component_name": component_name,
+                    "naics_code": naics_code,
+                    "naics_description": "",
+                    "set_aside_code": "",
+                    "set_aside_description": "",
+                    "performance_country": country,
+                    "performance_state": "",
+                    "support_awarding_agency_name": agency_name,
+                    "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
+                }
+            )
+    return rows
+
+
+def _scopes_missing_optional_data(source_rows: list[dict]) -> list[tuple[str, str, str]]:
+    naics_scopes = {
+        (row["agency_name"], row["component_name"], row["naics_code"])
+        for row in source_rows
+        if row.get("naics_code")
+    }
+    scopes_with_set_aside = {
+        (row["agency_name"], row["component_name"], row["naics_code"])
+        for row in source_rows
+        if row.get("set_aside_code")
+    }
+    scopes_with_location = {
+        (row["agency_name"], row["component_name"], row["naics_code"])
+        for row in source_rows
+        if row.get("performance_country") or row.get("performance_state")
+    }
+    return sorted(
+        scope
+        for scope in naics_scopes
+        if scope not in scopes_with_set_aside or scope not in scopes_with_location
+    )
 
 
 def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dict]:
+    _start_build_progress()
     live_agencies = fetch_toptier_agencies()
     agencies = []
     excluded = []
@@ -427,39 +815,50 @@ def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dic
     component_seen = set()
     source_rows = []
     fixture_rows = _fixture_source_rows()
-    fixture_by_scope = {(row["agency_name"], row["component_name"], row["naics_code"]): row for row in fixture_rows}
-    funding_office_transactions: dict[str, pd.DataFrame] = {}
+    agency_transactions: dict[str, pd.DataFrame] = {}
     diagnostics = {
         "total_top_tier_agencies_returned": len(live_agencies),
         "excluded_agencies": excluded,
         "component_source_errors": {},
         "naics_source_errors": {},
+        "optional_source_errors": {},
+        "partial_download_agencies": {},
     }
 
-    for agency_record in agencies:
+    for index, agency_record in enumerate(agencies, start=1):
         agency = agency_record["agency_name"]
+        _update_build_progress(
+            "download_agency_transactions",
+            f"Downloading transactions for {agency}",
+            current=index,
+            total=len(agencies),
+            agency=agency,
+        )
+        frame, tx_diag = _fetch_agency_transactions_for_index_build(agency)
+        agency_transactions[agency] = frame
+        if tx_diag.get("partial_download"):
+            diagnostics["partial_download_agencies"][agency] = {
+                "rows_returned": tx_diag.get("rows_returned"),
+                "partial_download": True,
+            }
+        if frame.empty:
+            diagnostics["component_source_errors"][agency] = tx_diag.get("error", "no transactions returned for option index build")
+
         config = get_agency_component_config(agency)
         if config["dimension_type"] == "funding_office":
-            if agency not in funding_office_transactions:
-                frame, tx_diag = _fetch_agency_transactions_for_index_build(agency)
-                if frame.empty:
-                    diagnostics["component_source_errors"][agency] = tx_diag.get("error", "no transactions returned for funding-office discovery")
-                    discovered_components = _state_component_rows() if agency == "Department of State" else []
-                else:
-                    funding_office_transactions[agency] = frame
-                    discovered_components = _funding_office_component_rows(agency, frame)
+            discovered_components = (
+                _funding_office_component_rows(agency, frame)
+                if not frame.empty
+                else (_state_component_rows() if agency == "Department of State" else [])
+            )
         else:
             names = fetch_subagencies(agency_record["toptier_code"])
             discovered_components = [
-                {
-                    "agency_name": agency,
-                    "component_dimension_type": config["dimension_type"],
-                    "component_code": "",
-                    "component_name": clean_text(name),
-                }
+                _default_component_row(agency, config, clean_text(name))
                 for name in names
                 if clean_text(name)
             ]
+            discovered_components.extend(_discover_components_from_transactions(agency, frame))
             if not discovered_components:
                 diagnostics["component_source_errors"][agency] = "no subagency components returned"
         for row in discovered_components:
@@ -480,53 +879,104 @@ def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dic
                     "component_dimension_type": fixture["component_dimension_type"],
                     "component_code": fixture["component_code"],
                     "component_name": fixture["component_name"],
+                    "subtier_filter_type": "awarding",
                 }
             )
 
-    for component in component_rows:
+    _apply_subtier_filter_types(component_rows, agency_transactions)
+    _update_build_progress(
+        "derive_transaction_rows",
+        "Deriving NAICS, set-aside, and location rows from agency transactions",
+        agencies_total=len(agencies),
+        components_total=len(component_rows),
+    )
+
+    components_by_agency: dict[str, list[dict]] = {}
+    for row in component_rows:
+        components_by_agency.setdefault(row["agency_name"], []).append(row)
+
+    existing_keys: set[tuple] = set()
+    for agency, agency_components in components_by_agency.items():
+        frame = agency_transactions.get(agency, pd.DataFrame())
+        lookup = _component_lookup(agency_components)
+        tx_rows = _source_rows_from_agency_transactions(agency, lookup, frame)
+        for row in tx_rows:
+            existing_keys.add(
+                (
+                    row["component_name"],
+                    row["naics_code"],
+                    row["set_aside_code"],
+                    row["performance_country"],
+                    row["performance_state"],
+                )
+            )
+        source_rows.extend(tx_rows)
+
+    _update_build_progress(
+        "supplement_category_naics",
+        "Supplementing NAICS from category API for all components",
+        components_total=len(component_rows),
+        source_rows=len(source_rows),
+    )
+    for index, component in enumerate(component_rows, start=1):
         agency = component["agency_name"]
         component_name = component["component_name"]
-        if component["component_dimension_type"] == "funding_office":
-            frame = funding_office_transactions.get(agency)
-            if frame is None or frame.empty:
-                diagnostics["naics_source_errors"][f"{agency} / {component_name}"] = "funding-office transactions unavailable"
-                continue
-            naics_rows = _funding_office_naics_rows(agency, component_name, frame)
-            if not naics_rows:
-                diagnostics["naics_source_errors"][f"{agency} / {component_name}"] = "no NAICS found in funding-office transactions"
-                continue
-            source_rows.extend(naics_rows)
-            continue
-        naics_results, diag = _category_options(agency, component_name, "naics")
-        if diag.get("error"):
-            diagnostics["naics_source_errors"][f"{agency} / {component_name}"] = diag["error"]
-            continue
-        added = 0
-        for item in naics_results:
-            code = clean_text(item.get("code") or item.get("id"))
-            description = clean_text(item.get("name") or item.get("description"))
-            if not code:
-                continue
-            source_rows.append(
-                {
-                    "agency_name": agency,
-                    "component_dimension_type": component["component_dimension_type"],
-                    "component_code": component["component_code"],
-                    "component_name": component_name,
-                    "naics_code": code,
-                    "naics_description": description,
-                    "set_aside_code": "",
-                    "set_aside_description": "",
-                    "performance_country": "",
-                    "performance_state": "",
-                    "support_awarding_agency_name": agency,
-                    "support_funding_agency_name": agency if component["component_dimension_type"] == "funding_office" else "",
-                }
+        existing_naics = {
+            row["naics_code"]
+            for row in source_rows
+            if row["agency_name"] == agency and row["component_name"] == component_name and row.get("naics_code")
+        }
+        if index == 1 or index % 25 == 0 or index == len(component_rows):
+            _update_build_progress(
+                "supplement_category_naics",
+                f"Category NAICS supplement for {agency} / {component_name}",
+                current=index,
+                total=len(component_rows),
+                source_rows=len(source_rows),
             )
-            added += 1
-        fixture = fixture_by_scope.get((agency, component_name, "541611"))
-        if not added and fixture:
-            source_rows.append(dict(fixture))
+        naics_rows, err = _category_naics_rows(agency, component)
+        if err:
+            diagnostics["naics_source_errors"][f"{agency} / {component_name}"] = err
+            continue
+        new_rows = [row for row in naics_rows if row["naics_code"] not in existing_naics]
+        if not new_rows and not existing_naics:
+            diagnostics["naics_source_errors"][f"{agency} / {component_name}"] = "no NAICS returned for scope"
+            continue
+        _append_source_rows(new_rows, existing_keys, source_rows)
+
+    optional_scopes = _prioritize_optional_scopes(_scopes_missing_optional_data(source_rows))
+    optional_total = len(optional_scopes)
+    optional_limit = min(optional_total, OPTIONAL_ENRICHMENT_MAX_SCOPES)
+    _update_build_progress(
+        "optional_api_enrichment",
+        "Enriching set-aside and performance location options from scoped API",
+        current=0,
+        total=optional_limit,
+        optional_scopes_total=optional_total,
+        optional_scopes_capped=optional_total > OPTIONAL_ENRICHMENT_MAX_SCOPES,
+        source_rows=len(source_rows),
+    )
+    for index, (agency, component_name, naics_code) in enumerate(optional_scopes[:optional_limit], start=1):
+        if index == 1 or index % 10 == 0 or index == optional_limit:
+            _update_build_progress(
+                "optional_api_enrichment",
+                f"Optional API enrichment for {agency} / {component_name} / {naics_code}",
+                current=index,
+                total=optional_limit,
+                optional_scopes_total=optional_total,
+                optional_scopes_capped=optional_total > OPTIONAL_ENRICHMENT_MAX_SCOPES,
+                source_rows=len(source_rows),
+            )
+        component = next(
+            (row for row in component_rows if row["agency_name"] == agency and row["component_name"] == component_name),
+            None,
+        )
+        if not component:
+            continue
+        try:
+            source_rows.extend(_enrich_optional_rows_from_api(agency, component, naics_code, existing_keys))
+        except Exception as exc:
+            diagnostics["optional_source_errors"][f"{agency} / {component_name} / {naics_code}"] = str(exc)
 
     # Fixture rows remain validation supplements, not the agency universe.
     for fixture in fixture_rows:
@@ -534,6 +984,15 @@ def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dic
             source_rows.append(dict(fixture))
 
     report = _completeness_report(agencies, component_rows, source_rows, diagnostics)
+    _finish_build_progress(
+        "collect_complete",
+        "Collected option index source data",
+        agencies_total=len(agencies),
+        components_total=len(component_rows),
+        source_rows=len(source_rows),
+        optional_scopes_total=optional_total,
+        optional_scopes_enriched=optional_limit,
+    )
     return agencies, component_rows, source_rows, report
 
 
@@ -578,10 +1037,13 @@ def _completeness_report(agencies: list[dict], component_rows: list[dict], sourc
             if count == 0
         ],
         "components_with_zero_naics_mappings": components_with_zero_naics,
+        "agencies_with_partial_transaction_downloads": sorted(diagnostics.get("partial_download_agencies", {}).keys()),
+        "partial_download_agencies": diagnostics.get("partial_download_agencies", {}),
         "component_counts": component_counts,
         "source_errors": {
             "component": diagnostics["component_source_errors"],
             "naics": diagnostics["naics_source_errors"],
+            "optional": diagnostics.get("optional_source_errors", {}),
         },
     }
 
@@ -618,6 +1080,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             component_dimension_type TEXT NOT NULL,
             component_code TEXT NOT NULL,
             component_name TEXT NOT NULL,
+            subtier_filter_type TEXT NOT NULL DEFAULT 'awarding',
             PRIMARY KEY (agency_name, component_dimension_type, component_name, component_code)
         );
         CREATE TABLE naics_options (
@@ -637,6 +1100,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
 
 def _insert_rows(conn: sqlite3.Connection, agencies: list[dict], component_rows: list[dict], rows: list[dict]) -> None:
+    for row in component_rows:
+        row.setdefault("subtier_filter_type", "awarding")
     conn.executemany(
         """
         INSERT INTO agency_options (agency_name, toptier_code, abbreviation)
@@ -663,9 +1128,9 @@ def _insert_rows(conn: sqlite3.Connection, agencies: list[dict], component_rows:
     conn.executemany(
         """
         INSERT OR IGNORE INTO component_options (
-            agency_name, component_dimension_type, component_code, component_name
+            agency_name, component_dimension_type, component_code, component_name, subtier_filter_type
         ) VALUES (
-            :agency_name, :component_dimension_type, :component_code, :component_name
+            :agency_name, :component_dimension_type, :component_code, :component_name, :subtier_filter_type
         )
         """,
         component_rows,
@@ -729,8 +1194,17 @@ def refresh_index_atomically(index_path: Path = INDEX_PATH) -> Path:
     try:
         build_index_file(tmp_path)
         os.replace(tmp_path, index_path)
+        meta = metadata(index_path)
+        _finish_build_progress(
+            "complete",
+            f"Option index build complete: {index_path}",
+            schema_version=meta.get("schema_version"),
+            generated_at=meta.get("generated_at"),
+            row_counts=meta.get("row_counts"),
+        )
         return index_path
-    except Exception:
+    except Exception as exc:
+        _finish_build_progress("failed", f"Option index build failed: {exc}")
         if tmp_path.exists():
             tmp_path.unlink()
         raise
@@ -968,12 +1442,16 @@ def _fetch_agency_transactions_for_index_build(agency_name: str) -> tuple[pd.Dat
         max_elapsed=120.0,
         allow_truncated=True,
         download_limit=OPTION_DISCOVERY_DOWNLOAD_LIMIT,
+        columns=OPTION_INDEX_DOWNLOAD_COLUMNS,
     )
     if diag.get("error") and not rows:
         return pd.DataFrame(), diag
     frame = normalize_transactions(rows, default_agency=agency)
     diagnostics = diag.get("diagnostics") or {}
-    return frame, {"rows_returned": len(frame), "partial_download": diagnostics.get("partial_download")}
+    return frame, {
+        "rows_returned": len(frame),
+        "partial_download": diagnostics.get("partial_download") or diagnostics.get("limit_reached"),
+    }
 
 
 def _cached_lookup(cache_key: tuple, query: Callable[[], list[dict]]) -> tuple[list[dict], dict]:
@@ -1000,6 +1478,30 @@ def get_agency_options() -> list[dict]:
     with _open() as conn:
         rows = conn.execute("SELECT agency_name, toptier_code, abbreviation FROM agency_options ORDER BY agency_name").fetchall()
     return [dict(row) for row in rows]
+
+
+def lookup_subtier_filter_type(agency_name: str, component_name: str) -> str:
+    agency = clean_text(agency_name)
+    component = clean_text(component_name)
+    if not agency or not component:
+        return "awarding"
+    try:
+        validate_index()
+        with _open() as conn:
+            row = conn.execute(
+                """
+                SELECT subtier_filter_type
+                FROM component_options
+                WHERE agency_name = ? AND component_name = ?
+                LIMIT 1
+                """,
+                (agency, component),
+            ).fetchone()
+        if row and clean_text(row["subtier_filter_type"]):
+            return clean_text(row["subtier_filter_type"])
+    except OptionIndexError:
+        pass
+    return "awarding"
 
 
 def get_component_options(agency_name: str) -> list[dict]:
@@ -1162,16 +1664,10 @@ def _location_values_from_rows(rows: list[dict]) -> dict[str, str]:
 def set_aside_option_values(agency_name: str, component_value: str | None, naics_code: str | None) -> tuple[list[str], dict]:
     rows, diag = get_set_aside_options_with_diagnostics(agency_name, component_value, naics_code)
     values = [f"{row['set_aside_code']} - {row['set_aside_description']}" if row["set_aside_description"] else row["set_aside_code"] for row in rows]
-    if values:
-        return [ALL_SET_ASIDES] + values, {**diag, "lookup_type": "Set-Aside"}
-    snapshot = option_discovery_snapshot(agency_name, component_value, naics_code)
-    return fetch_scoped_set_aside_options(snapshot)
+    return [ALL_SET_ASIDES] + values, {**diag, "lookup_type": "Set-Aside"}
 
 
 def location_option_values(agency_name: str, component_value: str | None, naics_code: str | None, set_aside_code: str | None) -> tuple[list[str], dict]:
     rows, diag = get_location_options_with_diagnostics(agency_name, component_value, naics_code, set_aside_code)
     values = _location_values_from_rows(rows)
-    if values:
-        return [ALL_LOCATIONS] + [values[key] for key in sorted(values)], {**diag, "lookup_type": "Performance Location"}
-    snapshot = option_discovery_snapshot(agency_name, component_value, naics_code, set_aside_code)
-    return fetch_scoped_location_options(snapshot)
+    return [ALL_LOCATIONS] + [values[key] for key in sorted(values)], {**diag, "lookup_type": "Performance Location"}

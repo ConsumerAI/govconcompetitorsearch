@@ -191,6 +191,31 @@ class FilterAndOutputTests(unittest.TestCase):
         awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         self.assertTrue(awards["USAspending Award Link"].str.startswith("https://www.usaspending.gov/award/").any())
 
+    def test_component_filter_matches_funding_subagency_when_awarding_differs(self):
+        labor = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Labor",
+                    "awarding_sub_agency_name": "Office of the Assistant Secretary for Administration and Management",
+                    "funding_sub_agency_name": "Bureau of Labor Statistics",
+                    "naics_code": "541720",
+                    "federal_action_obligation": "500",
+                    "action_date": "2025-01-01",
+                    "recipient_name": "Example Vendor",
+                    "award_id_piid": "LABOR-1",
+                    "primary_place_of_performance_country_code": "USA",
+                    "primary_place_of_performance_state_code": "DC",
+                    "type_of_set_aside": "SBA",
+                }
+            ]
+        )
+        scoped = filter_transactions(
+            labor,
+            FilterSnapshot(agency="Department of Labor", component="Bureau of Labor Statistics", naics="541720"),
+        )
+        self.assertEqual(len(scoped), 1)
+        self.assertEqual(scoped["naics_code"].iloc[0], "541720")
+
 
 if __name__ == "__main__":
     unittest.main()

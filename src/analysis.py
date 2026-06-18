@@ -54,8 +54,28 @@ def _office_parts(row: dict, object_alias: str, code_alias: str, name_alias: str
 def _place_parts(row: dict) -> tuple[str, str]:
     place = first_present(row, ["Primary Place of Performance", "primary_place_of_performance", "Place of Performance"])
     country, state = _parts(place, ["country_code", "country", "country_code_alpha3"], ["state_code", "state"])
-    country = country or clean_text(_field(row, ["place_of_performance_country_code", "Place of Performance Country Code", "pop_country_code"])).upper()
-    state = state or clean_text(_field(row, ["place_of_performance_state_code", "Place of Performance State Code", "pop_state"])).upper()
+    country = country or clean_text(
+        _field(
+            row,
+            [
+                "primary_place_of_performance_country_code",
+                "place_of_performance_country_code",
+                "Place of Performance Country Code",
+                "pop_country_code",
+            ],
+        )
+    ).upper()
+    state = state or clean_text(
+        _field(
+            row,
+            [
+                "primary_place_of_performance_state_code",
+                "place_of_performance_state_code",
+                "Place of Performance State Code",
+                "pop_state",
+            ],
+        )
+    ).upper()
     return country.upper(), state.upper()
 
 
@@ -111,7 +131,9 @@ def normalize_transactions(rows: list[dict], default_agency: str = "") -> pd.Dat
                 "awarding_office_name": awarding_name,
                 "naics_code": naics_code or clean_text(_field(row, ["naics_code", "NAICS Code", "naics"])),
                 "naics_description": naics_description or clean_text(_field(row, ["naics_description", "NAICS Description", "naics_desc"])),
-                "set_aside_type": clean_text(_field(row, ["set_aside_type", "set_aside_type_code", "Set-Aside Type"])),
+                "set_aside_type": clean_text(
+                    _field(row, ["set_aside_type", "set_aside_type_code", "type_of_set_aside", "Set-Aside Type"])
+                ),
                 "place_of_performance_country_code": country_code,
                 "place_of_performance_state_code": state_code,
                 "performance_location": format_location(country_code, state_code),
@@ -183,7 +205,13 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
         scoped = scoped[scoped["awarding_agency_name"] == snapshot.agency]
     config = get_agency_component_config(snapshot.agency)
     if snapshot.component != ALL_COMPONENTS:
-        scoped = scoped[scoped[config["field_name"]] == snapshot.component]
+        if config["dimension_type"] == "awarding_subagency":
+            component = snapshot.component
+            scoped = scoped[
+                (scoped["awarding_sub_agency_name"] == component) | (scoped["funding_sub_agency_name"] == component)
+            ]
+        else:
+            scoped = scoped[scoped[config["field_name"]] == snapshot.component]
     if snapshot.naics != ALL_NAICS:
         code = option_code(snapshot.naics)
         scoped = scoped[scoped["naics_code"].astype(str).str.startswith(code, na=False)]
