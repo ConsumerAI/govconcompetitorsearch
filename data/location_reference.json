@@ -1,0 +1,1317 @@
+[
+  {
+    "code": "AK",
+    "label": "AK - Alaska",
+    "kind": "state"
+  },
+  {
+    "code": "AL",
+    "label": "AL - Alabama",
+    "kind": "state"
+  },
+  {
+    "code": "AR",
+    "label": "AR - Arkansas",
+    "kind": "state"
+  },
+  {
+    "code": "AZ",
+    "label": "AZ - Arizona",
+    "kind": "state"
+  },
+  {
+    "code": "CA",
+    "label": "CA - California",
+    "kind": "state"
+  },
+  {
+    "code": "CO",
+    "label": "CO - Colorado",
+    "kind": "state"
+  },
+  {
+    "code": "CT",
+    "label": "CT - Connecticut",
+    "kind": "state"
+  },
+  {
+    "code": "DC",
+    "label": "DC - District of Columbia",
+    "kind": "state"
+  },
+  {
+    "code": "DE",
+    "label": "DE - Delaware",
+    "kind": "state"
+  },
+  {
+    "code": "FL",
+    "label": "FL - Florida",
+    "kind": "state"
+  },
+  {
+    "code": "GA",
+    "label": "GA - Georgia",
+    "kind": "state"
+  },
+  {
+    "code": "HI",
+    "label": "HI - Hawaii",
+    "kind": "state"
+  },
+  {
+    "code": "IA",
+    "label": "IA - Iowa",
+    "kind": "state"
+  },
+  {
+    "code": "ID",
+    "label": "ID - Idaho",
+    "kind": "state"
+  },
+  {
+    "code": "IL",
+    "label": "IL - Illinois",
+    "kind": "state"
+  },
+  {
+    "code": "IN",
+    "label": "IN - Indiana",
+    "kind": "state"
+  },
+  {
+    "code": "KS",
+    "label": "KS - Kansas",
+    "kind": "state"
+  },
+  {
+    "code": "KY",
+    "label": "KY - Kentucky",
+    "kind": "state"
+  },
+  {
+    "code": "LA",
+    "label": "LA - Louisiana",
+    "kind": "state"
+  },
+  {
+    "code": "MA",
+    "label": "MA - Massachusetts",
+    "kind": "state"
+  },
+  {
+    "code": "MD",
+    "label": "MD - Maryland",
+    "kind": "state"
+  },
+  {
+    "code": "ME",
+    "label": "ME - Maine",
+    "kind": "state"
+  },
+  {
+    "code": "MI",
+    "label": "MI - Michigan",
+    "kind": "state"
+  },
+  {
+    "code": "MN",
+    "label": "MN - Minnesota",
+    "kind": "state"
+  },
+  {
+    "code": "MO",
+    "label": "MO - Missouri",
+    "kind": "state"
+  },
+  {
+    "code": "MS",
+    "label": "MS - Mississippi",
+    "kind": "state"
+  },
+  {
+    "code": "MT",
+    "label": "MT - Montana",
+    "kind": "state"
+  },
+  {
+    "code": "NC",
+    "label": "NC - North Carolina",
+    "kind": "state"
+  },
+  {
+    "code": "ND",
+    "label": "ND - North Dakota",
+    "kind": "state"
+  },
+  {
+    "code": "NE",
+    "label": "NE - Nebraska",
+    "kind": "state"
+  },
+  {
+    "code": "NH",
+    "label": "NH - New Hampshire",
+    "kind": "state"
+  },
+  {
+    "code": "NJ",
+    "label": "NJ - New Jersey",
+    "kind": "state"
+  },
+  {
+    "code": "NM",
+    "label": "NM - New Mexico",
+    "kind": "state"
+  },
+  {
+    "code": "NV",
+    "label": "NV - Nevada",
+    "kind": "state"
+  },
+  {
+    "code": "NY",
+    "label": "NY - New York",
+    "kind": "state"
+  },
+  {
+    "code": "OH",
+    "label": "OH - Ohio",
+    "kind": "state"
+  },
+  {
+    "code": "OK",
+    "label": "OK - Oklahoma",
+    "kind": "state"
+  },
+  {
+    "code": "OR",
+    "label": "OR - Oregon",
+    "kind": "state"
+  },
+  {
+    "code": "PA",
+    "label": "PA - Pennsylvania",
+    "kind": "state"
+  },
+  {
+    "code": "RI",
+    "label": "RI - Rhode Island",
+    "kind": "state"
+  },
+  {
+    "code": "SC",
+    "label": "SC - South Carolina",
+    "kind": "state"
+  },
+  {
+    "code": "SD",
+    "label": "SD - South Dakota",
+    "kind": "state"
+  },
+  {
+    "code": "TN",
+    "label": "TN - Tennessee",
+    "kind": "state"
+  },
+  {
+    "code": "TX",
+    "label": "TX - Texas",
+    "kind": "state"
+  },
+  {
+    "code": "UT",
+    "label": "UT - Utah",
+    "kind": "state"
+  },
+  {
+    "code": "VA",
+    "label": "VA - Virginia",
+    "kind": "state"
+  },
+  {
+    "code": "VT",
+    "label": "VT - Vermont",
+    "kind": "state"
+  },
+  {
+    "code": "WA",
+    "label": "WA - Washington",
+    "kind": "state"
+  },
+  {
+    "code": "WI",
+    "label": "WI - Wisconsin",
+    "kind": "state"
+  },
+  {
+    "code": "WV",
+    "label": "WV - West Virginia",
+    "kind": "state"
+  },
+  {
+    "code": "WY",
+    "label": "WY - Wyoming",
+    "kind": "state"
+  },
+  {
+    "code": "AFG",
+    "label": "AFG - Afghanistan",
+    "kind": "country"
+  },
+  {
+    "code": "CAN",
+    "label": "CAN - Canada",
+    "kind": "country"
+  },
+  {
+    "code": "DEU",
+    "label": "DEU - Germany",
+    "kind": "country"
+  },
+  {
+    "code": "GBR",
+    "label": "GBR - United Kingdom",
+    "kind": "country"
+  },
+  {
+    "code": "IRQ",
+    "label": "IRQ - Iraq",
+    "kind": "country"
+  },
+  {
+    "code": "JPN",
+    "label": "JPN - Japan",
+    "kind": "country"
+  },
+  {
+    "code": "KOR",
+    "label": "KOR - South Korea",
+    "kind": "country"
+  },
+  {
+    "code": "USA",
+    "label": "USA - United States",
+    "kind": "country"
+  },
+  {
+    "code": "ABW",
+    "label": "ABW - ABW",
+    "kind": "country"
+  },
+  {
+    "code": "AGO",
+    "label": "AGO - AGO",
+    "kind": "country"
+  },
+  {
+    "code": "AIA",
+    "label": "AIA - AIA",
+    "kind": "country"
+  },
+  {
+    "code": "ALB",
+    "label": "ALB - ALB",
+    "kind": "country"
+  },
+  {
+    "code": "AND",
+    "label": "AND - AND",
+    "kind": "country"
+  },
+  {
+    "code": "ARE",
+    "label": "ARE - ARE",
+    "kind": "country"
+  },
+  {
+    "code": "ARG",
+    "label": "ARG - ARG",
+    "kind": "country"
+  },
+  {
+    "code": "ARM",
+    "label": "ARM - ARM",
+    "kind": "country"
+  },
+  {
+    "code": "ATA",
+    "label": "ATA - ATA",
+    "kind": "country"
+  },
+  {
+    "code": "ATG",
+    "label": "ATG - ATG",
+    "kind": "country"
+  },
+  {
+    "code": "AUS",
+    "label": "AUS - AUS",
+    "kind": "country"
+  },
+  {
+    "code": "AUT",
+    "label": "AUT - AUT",
+    "kind": "country"
+  },
+  {
+    "code": "AX2",
+    "label": "AX2 - AX2",
+    "kind": "country"
+  },
+  {
+    "code": "AZE",
+    "label": "AZE - AZE",
+    "kind": "country"
+  },
+  {
+    "code": "BDI",
+    "label": "BDI - BDI",
+    "kind": "country"
+  },
+  {
+    "code": "BEL",
+    "label": "BEL - BEL",
+    "kind": "country"
+  },
+  {
+    "code": "BEN",
+    "label": "BEN - BEN",
+    "kind": "country"
+  },
+  {
+    "code": "BFA",
+    "label": "BFA - BFA",
+    "kind": "country"
+  },
+  {
+    "code": "BGD",
+    "label": "BGD - BGD",
+    "kind": "country"
+  },
+  {
+    "code": "BGR",
+    "label": "BGR - BGR",
+    "kind": "country"
+  },
+  {
+    "code": "BHR",
+    "label": "BHR - BHR",
+    "kind": "country"
+  },
+  {
+    "code": "BHS",
+    "label": "BHS - BHS",
+    "kind": "country"
+  },
+  {
+    "code": "BIH",
+    "label": "BIH - BIH",
+    "kind": "country"
+  },
+  {
+    "code": "BLR",
+    "label": "BLR - BLR",
+    "kind": "country"
+  },
+  {
+    "code": "BLZ",
+    "label": "BLZ - BLZ",
+    "kind": "country"
+  },
+  {
+    "code": "BMU",
+    "label": "BMU - BMU",
+    "kind": "country"
+  },
+  {
+    "code": "BOL",
+    "label": "BOL - BOL",
+    "kind": "country"
+  },
+  {
+    "code": "BRA",
+    "label": "BRA - BRA",
+    "kind": "country"
+  },
+  {
+    "code": "BRB",
+    "label": "BRB - BRB",
+    "kind": "country"
+  },
+  {
+    "code": "BRN",
+    "label": "BRN - BRN",
+    "kind": "country"
+  },
+  {
+    "code": "BTN",
+    "label": "BTN - BTN",
+    "kind": "country"
+  },
+  {
+    "code": "BWA",
+    "label": "BWA - BWA",
+    "kind": "country"
+  },
+  {
+    "code": "CAF",
+    "label": "CAF - CAF",
+    "kind": "country"
+  },
+  {
+    "code": "CHE",
+    "label": "CHE - CHE",
+    "kind": "country"
+  },
+  {
+    "code": "CHL",
+    "label": "CHL - CHL",
+    "kind": "country"
+  },
+  {
+    "code": "CHN",
+    "label": "CHN - CHN",
+    "kind": "country"
+  },
+  {
+    "code": "CIV",
+    "label": "CIV - CIV",
+    "kind": "country"
+  },
+  {
+    "code": "CMR",
+    "label": "CMR - CMR",
+    "kind": "country"
+  },
+  {
+    "code": "COD",
+    "label": "COD - COD",
+    "kind": "country"
+  },
+  {
+    "code": "COG",
+    "label": "COG - COG",
+    "kind": "country"
+  },
+  {
+    "code": "COK",
+    "label": "COK - COK",
+    "kind": "country"
+  },
+  {
+    "code": "COL",
+    "label": "COL - COL",
+    "kind": "country"
+  },
+  {
+    "code": "COM",
+    "label": "COM - COM",
+    "kind": "country"
+  },
+  {
+    "code": "CPV",
+    "label": "CPV - CPV",
+    "kind": "country"
+  },
+  {
+    "code": "CRI",
+    "label": "CRI - CRI",
+    "kind": "country"
+  },
+  {
+    "code": "CUB",
+    "label": "CUB - CUB",
+    "kind": "country"
+  },
+  {
+    "code": "CUW",
+    "label": "CUW - CUW",
+    "kind": "country"
+  },
+  {
+    "code": "CYM",
+    "label": "CYM - CYM",
+    "kind": "country"
+  },
+  {
+    "code": "CYP",
+    "label": "CYP - CYP",
+    "kind": "country"
+  },
+  {
+    "code": "CZE",
+    "label": "CZE - CZE",
+    "kind": "country"
+  },
+  {
+    "code": "DGA",
+    "label": "DGA - DGA",
+    "kind": "country"
+  },
+  {
+    "code": "DJI",
+    "label": "DJI - DJI",
+    "kind": "country"
+  },
+  {
+    "code": "DMA",
+    "label": "DMA - DMA",
+    "kind": "country"
+  },
+  {
+    "code": "DNK",
+    "label": "DNK - DNK",
+    "kind": "country"
+  },
+  {
+    "code": "DOM",
+    "label": "DOM - DOM",
+    "kind": "country"
+  },
+  {
+    "code": "DZA",
+    "label": "DZA - DZA",
+    "kind": "country"
+  },
+  {
+    "code": "ECU",
+    "label": "ECU - ECU",
+    "kind": "country"
+  },
+  {
+    "code": "EGY",
+    "label": "EGY - EGY",
+    "kind": "country"
+  },
+  {
+    "code": "ERI",
+    "label": "ERI - ERI",
+    "kind": "country"
+  },
+  {
+    "code": "ESP",
+    "label": "ESP - ESP",
+    "kind": "country"
+  },
+  {
+    "code": "EST",
+    "label": "EST - EST",
+    "kind": "country"
+  },
+  {
+    "code": "ETH",
+    "label": "ETH - ETH",
+    "kind": "country"
+  },
+  {
+    "code": "FIN",
+    "label": "FIN - FIN",
+    "kind": "country"
+  },
+  {
+    "code": "FJI",
+    "label": "FJI - FJI",
+    "kind": "country"
+  },
+  {
+    "code": "FRA",
+    "label": "FRA - FRA",
+    "kind": "country"
+  },
+  {
+    "code": "FRO",
+    "label": "FRO - FRO",
+    "kind": "country"
+  },
+  {
+    "code": "GAB",
+    "label": "GAB - GAB",
+    "kind": "country"
+  },
+  {
+    "code": "GEO",
+    "label": "GEO - GEO",
+    "kind": "country"
+  },
+  {
+    "code": "GGY",
+    "label": "GGY - GGY",
+    "kind": "country"
+  },
+  {
+    "code": "GHA",
+    "label": "GHA - GHA",
+    "kind": "country"
+  },
+  {
+    "code": "GIB",
+    "label": "GIB - GIB",
+    "kind": "country"
+  },
+  {
+    "code": "GIN",
+    "label": "GIN - GIN",
+    "kind": "country"
+  },
+  {
+    "code": "GMB",
+    "label": "GMB - GMB",
+    "kind": "country"
+  },
+  {
+    "code": "GNB",
+    "label": "GNB - GNB",
+    "kind": "country"
+  },
+  {
+    "code": "GRC",
+    "label": "GRC - GRC",
+    "kind": "country"
+  },
+  {
+    "code": "GRD",
+    "label": "GRD - GRD",
+    "kind": "country"
+  },
+  {
+    "code": "GRL",
+    "label": "GRL - GRL",
+    "kind": "country"
+  },
+  {
+    "code": "GTM",
+    "label": "GTM - GTM",
+    "kind": "country"
+  },
+  {
+    "code": "GUY",
+    "label": "GUY - GUY",
+    "kind": "country"
+  },
+  {
+    "code": "HKG",
+    "label": "HKG - HKG",
+    "kind": "country"
+  },
+  {
+    "code": "HMD",
+    "label": "HMD - HMD",
+    "kind": "country"
+  },
+  {
+    "code": "HND",
+    "label": "HND - HND",
+    "kind": "country"
+  },
+  {
+    "code": "HRV",
+    "label": "HRV - HRV",
+    "kind": "country"
+  },
+  {
+    "code": "HTI",
+    "label": "HTI - HTI",
+    "kind": "country"
+  },
+  {
+    "code": "HUN",
+    "label": "HUN - HUN",
+    "kind": "country"
+  },
+  {
+    "code": "IDN",
+    "label": "IDN - IDN",
+    "kind": "country"
+  },
+  {
+    "code": "IMN",
+    "label": "IMN - IMN",
+    "kind": "country"
+  },
+  {
+    "code": "IND",
+    "label": "IND - IND",
+    "kind": "country"
+  },
+  {
+    "code": "IOT",
+    "label": "IOT - IOT",
+    "kind": "country"
+  },
+  {
+    "code": "IRL",
+    "label": "IRL - IRL",
+    "kind": "country"
+  },
+  {
+    "code": "IRN",
+    "label": "IRN - IRN",
+    "kind": "country"
+  },
+  {
+    "code": "ISL",
+    "label": "ISL - ISL",
+    "kind": "country"
+  },
+  {
+    "code": "ISR",
+    "label": "ISR - ISR",
+    "kind": "country"
+  },
+  {
+    "code": "ITA",
+    "label": "ITA - ITA",
+    "kind": "country"
+  },
+  {
+    "code": "JAM",
+    "label": "JAM - JAM",
+    "kind": "country"
+  },
+  {
+    "code": "JOR",
+    "label": "JOR - JOR",
+    "kind": "country"
+  },
+  {
+    "code": "KAZ",
+    "label": "KAZ - KAZ",
+    "kind": "country"
+  },
+  {
+    "code": "KEN",
+    "label": "KEN - KEN",
+    "kind": "country"
+  },
+  {
+    "code": "KGZ",
+    "label": "KGZ - KGZ",
+    "kind": "country"
+  },
+  {
+    "code": "KHM",
+    "label": "KHM - KHM",
+    "kind": "country"
+  },
+  {
+    "code": "KIR",
+    "label": "KIR - KIR",
+    "kind": "country"
+  },
+  {
+    "code": "KNA",
+    "label": "KNA - KNA",
+    "kind": "country"
+  },
+  {
+    "code": "KWT",
+    "label": "KWT - KWT",
+    "kind": "country"
+  },
+  {
+    "code": "LAO",
+    "label": "LAO - LAO",
+    "kind": "country"
+  },
+  {
+    "code": "LBN",
+    "label": "LBN - LBN",
+    "kind": "country"
+  },
+  {
+    "code": "LBR",
+    "label": "LBR - LBR",
+    "kind": "country"
+  },
+  {
+    "code": "LCA",
+    "label": "LCA - LCA",
+    "kind": "country"
+  },
+  {
+    "code": "LIE",
+    "label": "LIE - LIE",
+    "kind": "country"
+  },
+  {
+    "code": "LKA",
+    "label": "LKA - LKA",
+    "kind": "country"
+  },
+  {
+    "code": "LSO",
+    "label": "LSO - LSO",
+    "kind": "country"
+  },
+  {
+    "code": "LTU",
+    "label": "LTU - LTU",
+    "kind": "country"
+  },
+  {
+    "code": "LUX",
+    "label": "LUX - LUX",
+    "kind": "country"
+  },
+  {
+    "code": "LVA",
+    "label": "LVA - LVA",
+    "kind": "country"
+  },
+  {
+    "code": "MAC",
+    "label": "MAC - MAC",
+    "kind": "country"
+  },
+  {
+    "code": "MAR",
+    "label": "MAR - MAR",
+    "kind": "country"
+  },
+  {
+    "code": "MDA",
+    "label": "MDA - MDA",
+    "kind": "country"
+  },
+  {
+    "code": "MDG",
+    "label": "MDG - MDG",
+    "kind": "country"
+  },
+  {
+    "code": "MDV",
+    "label": "MDV - MDV",
+    "kind": "country"
+  },
+  {
+    "code": "MEX",
+    "label": "MEX - MEX",
+    "kind": "country"
+  },
+  {
+    "code": "MKD",
+    "label": "MKD - MKD",
+    "kind": "country"
+  },
+  {
+    "code": "MLI",
+    "label": "MLI - MLI",
+    "kind": "country"
+  },
+  {
+    "code": "MLT",
+    "label": "MLT - MLT",
+    "kind": "country"
+  },
+  {
+    "code": "MMR",
+    "label": "MMR - MMR",
+    "kind": "country"
+  },
+  {
+    "code": "MNE",
+    "label": "MNE - MNE",
+    "kind": "country"
+  },
+  {
+    "code": "MNG",
+    "label": "MNG - MNG",
+    "kind": "country"
+  },
+  {
+    "code": "MOZ",
+    "label": "MOZ - MOZ",
+    "kind": "country"
+  },
+  {
+    "code": "MRT",
+    "label": "MRT - MRT",
+    "kind": "country"
+  },
+  {
+    "code": "MTQ",
+    "label": "MTQ - MTQ",
+    "kind": "country"
+  },
+  {
+    "code": "MUS",
+    "label": "MUS - MUS",
+    "kind": "country"
+  },
+  {
+    "code": "MWI",
+    "label": "MWI - MWI",
+    "kind": "country"
+  },
+  {
+    "code": "MYS",
+    "label": "MYS - MYS",
+    "kind": "country"
+  },
+  {
+    "code": "NAM",
+    "label": "NAM - NAM",
+    "kind": "country"
+  },
+  {
+    "code": "NCL",
+    "label": "NCL - NCL",
+    "kind": "country"
+  },
+  {
+    "code": "NER",
+    "label": "NER - NER",
+    "kind": "country"
+  },
+  {
+    "code": "NGA",
+    "label": "NGA - NGA",
+    "kind": "country"
+  },
+  {
+    "code": "NIC",
+    "label": "NIC - NIC",
+    "kind": "country"
+  },
+  {
+    "code": "NLD",
+    "label": "NLD - NLD",
+    "kind": "country"
+  },
+  {
+    "code": "NOR",
+    "label": "NOR - NOR",
+    "kind": "country"
+  },
+  {
+    "code": "NPL",
+    "label": "NPL - NPL",
+    "kind": "country"
+  },
+  {
+    "code": "NZL",
+    "label": "NZL - NZL",
+    "kind": "country"
+  },
+  {
+    "code": "OMN",
+    "label": "OMN - OMN",
+    "kind": "country"
+  },
+  {
+    "code": "PAK",
+    "label": "PAK - PAK",
+    "kind": "country"
+  },
+  {
+    "code": "PAN",
+    "label": "PAN - PAN",
+    "kind": "country"
+  },
+  {
+    "code": "PER",
+    "label": "PER - PER",
+    "kind": "country"
+  },
+  {
+    "code": "PHL",
+    "label": "PHL - PHL",
+    "kind": "country"
+  },
+  {
+    "code": "PNG",
+    "label": "PNG - PNG",
+    "kind": "country"
+  },
+  {
+    "code": "POL",
+    "label": "POL - POL",
+    "kind": "country"
+  },
+  {
+    "code": "PRT",
+    "label": "PRT - PRT",
+    "kind": "country"
+  },
+  {
+    "code": "PRY",
+    "label": "PRY - PRY",
+    "kind": "country"
+  },
+  {
+    "code": "PYF",
+    "label": "PYF - PYF",
+    "kind": "country"
+  },
+  {
+    "code": "QAT",
+    "label": "QAT - QAT",
+    "kind": "country"
+  },
+  {
+    "code": "REU",
+    "label": "REU - REU",
+    "kind": "country"
+  },
+  {
+    "code": "ROU",
+    "label": "ROU - ROU",
+    "kind": "country"
+  },
+  {
+    "code": "RUS",
+    "label": "RUS - RUS",
+    "kind": "country"
+  },
+  {
+    "code": "RWA",
+    "label": "RWA - RWA",
+    "kind": "country"
+  },
+  {
+    "code": "SAU",
+    "label": "SAU - SAU",
+    "kind": "country"
+  },
+  {
+    "code": "SDN",
+    "label": "SDN - SDN",
+    "kind": "country"
+  },
+  {
+    "code": "SEN",
+    "label": "SEN - SEN",
+    "kind": "country"
+  },
+  {
+    "code": "SGP",
+    "label": "SGP - SGP",
+    "kind": "country"
+  },
+  {
+    "code": "SHN",
+    "label": "SHN - SHN",
+    "kind": "country"
+  },
+  {
+    "code": "SLB",
+    "label": "SLB - SLB",
+    "kind": "country"
+  },
+  {
+    "code": "SLE",
+    "label": "SLE - SLE",
+    "kind": "country"
+  },
+  {
+    "code": "SLV",
+    "label": "SLV - SLV",
+    "kind": "country"
+  },
+  {
+    "code": "SOM",
+    "label": "SOM - SOM",
+    "kind": "country"
+  },
+  {
+    "code": "SRB",
+    "label": "SRB - SRB",
+    "kind": "country"
+  },
+  {
+    "code": "SSD",
+    "label": "SSD - SSD",
+    "kind": "country"
+  },
+  {
+    "code": "STP",
+    "label": "STP - STP",
+    "kind": "country"
+  },
+  {
+    "code": "SUR",
+    "label": "SUR - SUR",
+    "kind": "country"
+  },
+  {
+    "code": "SVK",
+    "label": "SVK - SVK",
+    "kind": "country"
+  },
+  {
+    "code": "SVN",
+    "label": "SVN - SVN",
+    "kind": "country"
+  },
+  {
+    "code": "SWE",
+    "label": "SWE - SWE",
+    "kind": "country"
+  },
+  {
+    "code": "SWZ",
+    "label": "SWZ - SWZ",
+    "kind": "country"
+  },
+  {
+    "code": "SYC",
+    "label": "SYC - SYC",
+    "kind": "country"
+  },
+  {
+    "code": "SYR",
+    "label": "SYR - SYR",
+    "kind": "country"
+  },
+  {
+    "code": "TCD",
+    "label": "TCD - TCD",
+    "kind": "country"
+  },
+  {
+    "code": "TGO",
+    "label": "TGO - TGO",
+    "kind": "country"
+  },
+  {
+    "code": "THA",
+    "label": "THA - THA",
+    "kind": "country"
+  },
+  {
+    "code": "TJK",
+    "label": "TJK - TJK",
+    "kind": "country"
+  },
+  {
+    "code": "TKM",
+    "label": "TKM - TKM",
+    "kind": "country"
+  },
+  {
+    "code": "TLS",
+    "label": "TLS - TLS",
+    "kind": "country"
+  },
+  {
+    "code": "TON",
+    "label": "TON - TON",
+    "kind": "country"
+  },
+  {
+    "code": "TTO",
+    "label": "TTO - TTO",
+    "kind": "country"
+  },
+  {
+    "code": "TUN",
+    "label": "TUN - TUN",
+    "kind": "country"
+  },
+  {
+    "code": "TUR",
+    "label": "TUR - TUR",
+    "kind": "country"
+  },
+  {
+    "code": "TWN",
+    "label": "TWN - TWN",
+    "kind": "country"
+  },
+  {
+    "code": "TZA",
+    "label": "TZA - TZA",
+    "kind": "country"
+  },
+  {
+    "code": "UGA",
+    "label": "UGA - UGA",
+    "kind": "country"
+  },
+  {
+    "code": "UKR",
+    "label": "UKR - UKR",
+    "kind": "country"
+  },
+  {
+    "code": "UMI",
+    "label": "UMI - UMI",
+    "kind": "country"
+  },
+  {
+    "code": "URY",
+    "label": "URY - URY",
+    "kind": "country"
+  },
+  {
+    "code": "UZB",
+    "label": "UZB - UZB",
+    "kind": "country"
+  },
+  {
+    "code": "VCT",
+    "label": "VCT - VCT",
+    "kind": "country"
+  },
+  {
+    "code": "VEN",
+    "label": "VEN - VEN",
+    "kind": "country"
+  },
+  {
+    "code": "VGB",
+    "label": "VGB - VGB",
+    "kind": "country"
+  },
+  {
+    "code": "VNM",
+    "label": "VNM - VNM",
+    "kind": "country"
+  },
+  {
+    "code": "VUT",
+    "label": "VUT - VUT",
+    "kind": "country"
+  },
+  {
+    "code": "WSM",
+    "label": "WSM - WSM",
+    "kind": "country"
+  },
+  {
+    "code": "XGZ",
+    "label": "XGZ - XGZ",
+    "kind": "country"
+  },
+  {
+    "code": "XKS",
+    "label": "XKS - XKS",
+    "kind": "country"
+  },
+  {
+    "code": "XWB",
+    "label": "XWB - XWB",
+    "kind": "country"
+  },
+  {
+    "code": "YEM",
+    "label": "YEM - YEM",
+    "kind": "country"
+  },
+  {
+    "code": "ZAF",
+    "label": "ZAF - ZAF",
+    "kind": "country"
+  },
+  {
+    "code": "ZMB",
+    "label": "ZMB - ZMB",
+    "kind": "country"
+  },
+  {
+    "code": "ZWE",
+    "label": "ZWE - ZWE",
+    "kind": "country"
+  }
+]

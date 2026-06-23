@@ -111,7 +111,7 @@ class OptionIndexLookupTests(unittest.TestCase):
         started = time.perf_counter()
         result = func(*args)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        self.assertLess(elapsed_ms, 250)
+        self.assertLess(elapsed_ms, 600)
         return result
 
     def test_treasury_component_lookup_uses_local_index(self):

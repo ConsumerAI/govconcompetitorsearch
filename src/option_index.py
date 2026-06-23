@@ -51,6 +51,7 @@ MIN_BROAD_AGENCY_COUNT = 40
 MAX_MAJOR_ZERO_COMPONENTS = 0
 BUILD_PROGRESS_PATH = PROJECT_ROOT / "data" / "option_index_build.progress.json"
 OPTIONAL_ENRICHMENT_MAX_SCOPES = 8000
+THIN_NAICS_SUPPLEMENT_THRESHOLD = 10
 
 
 class OptionIndexError(RuntimeError):
@@ -358,26 +359,38 @@ def _category_options(
     max_pages: int = 100,
     *,
     subtier_type: str = "awarding",
+    max_attempts: int = 4,
 ) -> tuple[list[dict], dict]:
-    results = []
-    payloads = []
-    for page in range(1, max_pages + 1):
-        payload = _category_payload(agency_name, component_name, category, page, subtier_type=subtier_type)
-        payloads.append(payload)
-        data, failure = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload, timeout=60)
-        if failure:
-            return [], {"error": failure.to_dict(), "payloads": payloads}
-        page_results = data.get("results") if isinstance(data, dict) else []
-        if not page_results:
-            break
-        results.extend(item for item in page_results if isinstance(item, dict))
-        page_meta = data.get("page_metadata") or {}
-        total = page_meta.get("total") or page_meta.get("total_results")
-        if total is not None and len(results) < int(total) and page >= max_pages:
-            return [], {"error": {"message": f"{category} option discovery reached max_pages before total results"}, "payloads": payloads}
-        if not page_meta.get("hasNext"):
-            break
-    return results, {"payloads": payloads, "error": None}
+    last_diag: dict = {"error": None}
+    for attempt in range(1, max_attempts + 1):
+        results = []
+        payloads = []
+        for page in range(1, max_pages + 1):
+            payload = _category_payload(agency_name, component_name, category, page, subtier_type=subtier_type)
+            payloads.append(payload)
+            data, failure = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload, timeout=60)
+            if failure:
+                last_diag = {"error": failure.to_dict(), "payloads": payloads}
+                break
+            page_results = data.get("results") if isinstance(data, dict) else []
+            if not page_results:
+                break
+            results.extend(item for item in page_results if isinstance(item, dict))
+            page_meta = data.get("page_metadata") or {}
+            total = page_meta.get("total") or page_meta.get("total_results")
+            if total is not None and len(results) < int(total) and page >= max_pages:
+                last_diag = {"error": {"message": f"{category} option discovery reached max_pages before total results"}, "payloads": payloads}
+                results = []
+                break
+            if not page_meta.get("hasNext"):
+                break
+        else:
+            return results, {"payloads": payloads, "error": None}
+        if results:
+            return results, {"payloads": payloads, "error": None}
+        if attempt < max_attempts:
+            time.sleep(1.5 * attempt)
+    return [], last_diag
 
 
 def _state_component_rows() -> list[dict]:
@@ -451,7 +464,11 @@ def _component_lookup(component_rows: list[dict]) -> dict[str, dict]:
     return lookup
 
 
-def _discover_components_from_transactions(agency_name: str, transactions: pd.DataFrame) -> list[dict]:
+def _discover_components_from_transactions(
+    agency_name: str,
+    transactions: pd.DataFrame,
+    known_subagencies: set[str] | None = None,
+) -> list[dict]:
     if transactions is None or transactions.empty:
         return []
     config = get_agency_component_config(agency_name)
@@ -467,6 +484,8 @@ def _discover_components_from_transactions(agency_name: str, transactions: pd.Da
                 else name
             )
             if not canonical or canonical.lower() in seen:
+                continue
+            if known_subagencies is not None and canonical.lower() not in known_subagencies:
                 continue
             seen.add(canonical.lower())
             rows.append(
@@ -622,8 +641,8 @@ def _category_naics_rows(agency_name: str, component: dict) -> tuple[list[dict],
                     "support_funding_agency_name": agency_name if component["component_dimension_type"] == "funding_office" else "",
                 }
             )
-        if rows:
-            return rows, None
+    if rows:
+        return rows, None
     if last_error:
         return [], last_error
     return rows, None
@@ -853,12 +872,13 @@ def collect_option_index_data() -> tuple[list[dict], list[dict], list[dict], dic
             )
         else:
             names = fetch_subagencies(agency_record["toptier_code"])
+            known_subagencies = {clean_text(name).lower() for name in names if clean_text(name)}
             discovered_components = [
                 _default_component_row(agency, config, clean_text(name))
                 for name in names
                 if clean_text(name)
             ]
-            discovered_components.extend(_discover_components_from_transactions(agency, frame))
+            discovered_components.extend(_discover_components_from_transactions(agency, frame, known_subagencies))
             if not discovered_components:
                 diagnostics["component_source_errors"][agency] = "no subagency components returned"
         for row in discovered_components:
@@ -1184,6 +1204,375 @@ def build_index_file(
             conn.execute("INSERT INTO metadata (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
     validate_index(output_path)
+
+
+def _components_with_zero_naics(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT agency_name, component_dimension_type, component_code, component_name, subtier_filter_type
+        FROM component_options c
+        WHERE NOT EXISTS (
+            SELECT 1 FROM naics_options n
+            WHERE n.agency_name = c.agency_name
+              AND n.component_name = c.component_name
+        )
+        ORDER BY agency_name, component_name
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _write_metadata(conn: sqlite3.Connection, report: dict, refresh_status: str = "complete") -> None:
+    row_counts = {
+        "agency_options": conn.execute("SELECT COUNT(*) FROM agency_options").fetchone()[0],
+        "option_sources": conn.execute("SELECT COUNT(*) FROM option_sources").fetchone()[0],
+        "component_options": conn.execute("SELECT COUNT(*) FROM component_options").fetchone()[0],
+        "naics_options": conn.execute("SELECT COUNT(*) FROM naics_options").fetchone()[0],
+    }
+    for key, value in _metadata(conn, row_counts, report, refresh_status).items():
+        conn.execute(
+            "INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def _completeness_report_from_index(
+    conn: sqlite3.Connection,
+    naics_errors: dict | None = None,
+    *,
+    cleared_error_keys: list[str] | None = None,
+) -> dict:
+    prior_row = conn.execute("SELECT value FROM metadata WHERE key = 'completeness_report'").fetchone()
+    prior: dict = {}
+    if prior_row:
+        try:
+            prior = json.loads(prior_row[0])
+        except json.JSONDecodeError:
+            prior = {}
+    components_with_zero_naics = [
+        {"agency_name": row[0], "component_name": row[1]}
+        for row in conn.execute(
+            """
+            SELECT c.agency_name, c.component_name
+            FROM component_options c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM naics_options n
+                WHERE n.agency_name = c.agency_name
+                  AND n.component_name = c.component_name
+            )
+            ORDER BY c.agency_name, c.component_name
+            """
+        ).fetchall()
+    ]
+    component_counts = {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT agency_name, COUNT(*) FROM component_options GROUP BY agency_name ORDER BY agency_name"
+        ).fetchall()
+    }
+    merged_naics_errors = dict((prior.get("source_errors") or {}).get("naics") or {})
+    if naics_errors:
+        merged_naics_errors.update(naics_errors)
+    for key in cleared_error_keys or []:
+        merged_naics_errors.pop(key, None)
+    return {
+        **prior,
+        "total_agency_components": conn.execute("SELECT COUNT(*) FROM component_options").fetchone()[0],
+        "total_agency_component_naics_mappings": conn.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT agency_name, component_name, naics_code FROM naics_options)"
+        ).fetchone()[0],
+        "total_set_aside_mappings": conn.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT agency_name, component_name, naics_code, set_aside_code FROM option_sources WHERE set_aside_code <> '')"
+        ).fetchone()[0],
+        "total_performance_location_mappings": conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT DISTINCT agency_name, component_name, naics_code, performance_country, performance_state
+                FROM option_sources
+                WHERE performance_country <> '' OR performance_state <> ''
+            )
+            """
+        ).fetchone()[0],
+        "components_with_zero_naics_mappings": components_with_zero_naics,
+        "component_counts": component_counts,
+        "source_errors": {
+            **(prior.get("source_errors") or {}),
+            "naics": merged_naics_errors,
+        },
+    }
+
+
+def _components_needing_naics_supplement(
+    conn: sqlite3.Connection,
+    *,
+    thin_threshold: int = THIN_NAICS_SUPPLEMENT_THRESHOLD,
+) -> list[dict]:
+    prior_row = conn.execute("SELECT value FROM metadata WHERE key = 'completeness_report'").fetchone()
+    prior_errors: dict = {}
+    if prior_row:
+        try:
+            prior_errors = (json.loads(prior_row[0]).get("source_errors") or {}).get("naics") or {}
+        except json.JSONDecodeError:
+            prior_errors = {}
+
+    targeted: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    rows = conn.execute(
+        """
+        SELECT agency_name, component_dimension_type, component_code, component_name, subtier_filter_type
+        FROM component_options
+        ORDER BY agency_name, component_name
+        """
+    ).fetchall()
+    for row in rows:
+        agency = row["agency_name"]
+        component_name = row["component_name"]
+        key = (agency, component_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        naics_count = conn.execute(
+            """
+            SELECT COUNT(DISTINCT naics_code)
+            FROM naics_options
+            WHERE agency_name = ? AND component_name = ?
+            """,
+            (agency, component_name),
+        ).fetchone()[0]
+        error_key = f"{agency} / {component_name}"
+        prior_error = prior_errors.get(error_key)
+        needs_supplement = (
+            naics_count == 0
+            or isinstance(prior_error, dict)
+            or (0 < naics_count < thin_threshold and prior_error is not None)
+        )
+        if needs_supplement:
+            targeted.append(dict(row))
+    return targeted
+
+
+def _existing_naics_codes(conn: sqlite3.Connection, agency_name: str, component_name: str) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            """
+            SELECT DISTINCT naics_code
+            FROM naics_options
+            WHERE agency_name = ? AND component_name = ?
+            """,
+            (agency_name, component_name),
+        ).fetchall()
+    }
+
+
+def _run_naics_supplement(index_path: Path, components: list[dict], *, progress_label: str) -> dict:
+    diagnostics: dict = {
+        "components_targeted": len(components),
+        "components_supplemented": [],
+        "components_still_empty": [],
+        "components_unchanged": [],
+        "naics_rows_added": 0,
+        "naics_source_errors": {},
+        "naics_errors_cleared": [],
+    }
+    if not components:
+        return diagnostics
+
+    new_rows: list[dict] = []
+    with _open(index_path) as conn:
+        existing_by_component = {
+            (component["agency_name"], component["component_name"]): _existing_naics_codes(
+                conn, component["agency_name"], component["component_name"]
+            )
+            for component in components
+        }
+
+    for index, component in enumerate(components, start=1):
+        agency = component["agency_name"]
+        component_name = component["component_name"]
+        scope_key = f"{agency} / {component_name}"
+        _update_build_progress(
+            progress_label,
+            f"Category NAICS supplement for {agency} / {component_name}",
+            current=index,
+            total=len(components),
+        )
+        existing_naics = existing_by_component.get((agency, component_name), set())
+        naics_rows, err = _category_naics_rows(agency, component)
+        if err:
+            diagnostics["naics_source_errors"][scope_key] = err
+            if not existing_naics:
+                diagnostics["components_still_empty"].append({"agency_name": agency, "component_name": component_name})
+            else:
+                diagnostics["components_unchanged"].append({"agency_name": agency, "component_name": component_name})
+            continue
+        fresh_rows = [row for row in naics_rows if row["naics_code"] not in existing_naics]
+        if not fresh_rows and not existing_naics:
+            diagnostics["naics_source_errors"][scope_key] = "no NAICS returned for scope"
+            diagnostics["components_still_empty"].append({"agency_name": agency, "component_name": component_name})
+            continue
+        if not fresh_rows:
+            diagnostics["components_unchanged"].append({"agency_name": agency, "component_name": component_name})
+            diagnostics["naics_errors_cleared"].append(scope_key)
+            continue
+        new_rows.extend(fresh_rows)
+        diagnostics["naics_errors_cleared"].append(scope_key)
+        diagnostics["components_supplemented"].append(
+            {
+                "agency_name": agency,
+                "component_name": component_name,
+                "naics_added": len(fresh_rows),
+                "naics_total": len(existing_naics) + len(fresh_rows),
+            }
+        )
+
+    diagnostics["naics_rows_added"] = len(new_rows)
+    if new_rows:
+        fd, tmp_name = tempfile.mkstemp(prefix="option_index_supplement_", suffix=".sqlite", dir=str(index_path.parent))
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            import shutil
+
+            shutil.copy2(index_path, tmp_path)
+            with _open(tmp_path) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO option_sources (
+                        agency_name, component_dimension_type, component_code, component_name,
+                        naics_code, naics_description, set_aside_code, set_aside_description,
+                        performance_country, performance_state, support_awarding_agency_name,
+                        support_funding_agency_name
+                    ) VALUES (
+                        :agency_name, :component_dimension_type, :component_code, :component_name,
+                        :naics_code, :naics_description, :set_aside_code, :set_aside_description,
+                        :performance_country, :performance_state, :support_awarding_agency_name,
+                        :support_funding_agency_name
+                    )
+                    """,
+                    new_rows,
+                )
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO naics_options (
+                        agency_name, component_dimension_type, component_code, component_name,
+                        naics_code, naics_description
+                    ) VALUES (
+                        :agency_name, :component_dimension_type, :component_code, :component_name,
+                        :naics_code, :naics_description
+                    )
+                    """,
+                    new_rows,
+                )
+                report = _completeness_report_from_index(
+                    conn,
+                    diagnostics["naics_source_errors"],
+                    cleared_error_keys=diagnostics["naics_errors_cleared"],
+                )
+                _write_metadata(conn, report, refresh_status="supplemented")
+                conn.commit()
+            validate_index(tmp_path)
+            os.replace(tmp_path, index_path)
+            clear_process_cache()
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+    return diagnostics
+
+
+def supplement_naics_gaps_index(index_path: Path = INDEX_PATH, agency_name: str | None = None) -> dict:
+    """Merge any NAICS codes returned by the category API that are missing from the index."""
+    validate_index(index_path)
+    clear_process_cache()
+    _start_build_progress()
+    agency = clean_text(agency_name)
+    with _open(index_path) as conn:
+        if agency:
+            components = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT agency_name, component_dimension_type, component_code, component_name, subtier_filter_type
+                    FROM component_options
+                    WHERE agency_name = ?
+                    ORDER BY component_name
+                    """,
+                    (agency,),
+                ).fetchall()
+            ]
+        else:
+            components = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT agency_name, component_dimension_type, component_code, component_name, subtier_filter_type
+                    FROM component_options
+                    ORDER BY agency_name, component_name
+                    """
+                ).fetchall()
+            ]
+    diagnostics = _run_naics_supplement(index_path, components, progress_label="supplement_naics_gaps")
+    _finish_build_progress(
+        "supplement_complete",
+        "NAICS gap supplement finished",
+        agency_filter=agency or "",
+        components_targeted=diagnostics["components_targeted"],
+        components_supplemented=len(diagnostics["components_supplemented"]),
+        components_still_empty=len(diagnostics["components_still_empty"]),
+        components_unchanged=len(diagnostics["components_unchanged"]),
+        naics_rows_added=diagnostics["naics_rows_added"],
+    )
+    return diagnostics
+
+
+def supplement_incomplete_naics_index(index_path: Path = INDEX_PATH) -> dict:
+    validate_index(index_path)
+    clear_process_cache()
+    _start_build_progress()
+    with _open(index_path) as conn:
+        components = _components_needing_naics_supplement(conn)
+    diagnostics = _run_naics_supplement(index_path, components, progress_label="supplement_incomplete_naics")
+    _finish_build_progress(
+        "supplement_complete",
+        "Incomplete NAICS supplement finished",
+        components_targeted=diagnostics["components_targeted"],
+        components_supplemented=len(diagnostics["components_supplemented"]),
+        components_still_empty=len(diagnostics["components_still_empty"]),
+        components_unchanged=len(diagnostics["components_unchanged"]),
+        naics_rows_added=diagnostics["naics_rows_added"],
+    )
+    return diagnostics
+
+
+def supplement_zero_naics_index(index_path: Path = INDEX_PATH) -> dict:
+    validate_index(index_path)
+    clear_process_cache()
+    _start_build_progress()
+    with _open(index_path) as conn:
+        components = _components_with_zero_naics(conn)
+    if not components:
+        _finish_build_progress("supplement_complete", "No components with zero NAICS remain in the index")
+        return {
+            "components_targeted": 0,
+            "components_supplemented": [],
+            "components_still_empty": [],
+            "components_unchanged": [],
+            "naics_rows_added": 0,
+            "naics_source_errors": {},
+            "naics_errors_cleared": [],
+        }
+    diagnostics = _run_naics_supplement(index_path, components, progress_label="supplement_zero_naics")
+    _finish_build_progress(
+        "supplement_complete",
+        "Zero-NAICS supplement finished",
+        components_targeted=diagnostics["components_targeted"],
+        components_supplemented=len(diagnostics["components_supplemented"]),
+        components_still_empty=len(diagnostics["components_still_empty"]),
+        components_unchanged=len(diagnostics.get("components_unchanged", [])),
+        naics_rows_added=diagnostics["naics_rows_added"],
+    )
+    return diagnostics
 
 
 def refresh_index_atomically(index_path: Path = INDEX_PATH) -> Path:

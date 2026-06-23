@@ -9,6 +9,8 @@ __pycache__/
 tmp/
 data/*
 !data/option_index.sqlite
+!data/naics_reference.json
+!data/location_reference.json
 data/option_index.next.sqlite
 data/option_index_build.progress.json
 data/option_index_build.progress.tmp

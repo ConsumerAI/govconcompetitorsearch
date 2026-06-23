@@ -12,6 +12,11 @@ import streamlit as st
 from .agency_components import get_agency_component_config
 from .analysis import analyze, contractor_detail, filter_transactions
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
+from .global_filter_options import (
+    global_location_option_values,
+    global_naics_option_values,
+    global_set_aside_option_values,
+)
 from .option_index import (
     LOOKUP_TIMEOUT_SECONDS,
     OptionIndexError,
@@ -19,9 +24,6 @@ from .option_index import (
     get_agency_options,
     index_deployment_diagnostics,
     index_freshness,
-    location_option_values,
-    naics_option_values,
-    set_aside_option_values,
     validate_index,
 )
 from .state import FilterSnapshot, active_filter_chips, add_calendar_years, default_end_date, default_start_date, snapshots_differ
@@ -423,10 +425,14 @@ def _option_sets(
     stop_after: str | None = None,
 ) -> tuple[list[str], list[str], list[str], list[str], dict]:
     diagnostics: dict = {}
-    set_asides = [ALL_SET_ASIDES]
-    location_options = [ALL_LOCATIONS]
+    naics_options, naics_diag = global_naics_option_values()
+    set_asides, set_aside_diag = global_set_aside_option_values()
+    location_options, location_diag = global_location_option_values()
+    diagnostics["naics"] = naics_diag
+    diagnostics["set_aside"] = set_aside_diag
+    diagnostics["location"] = location_diag
     if not pending.agency:
-        return [ALL_COMPONENTS], [ALL_NAICS], set_asides, location_options, diagnostics
+        return [ALL_COMPONENTS], naics_options, set_asides, location_options, diagnostics
 
     component_options, component_diag = _session_cached_lookup(
         "Agency Component",
@@ -438,53 +444,12 @@ def _option_sets(
     )
     diagnostics["component"] = component_diag
     if stop_after == "component":
-        return component_options, [ALL_NAICS], set_asides, location_options, diagnostics
-
-    component = pending.component if pending.component in component_options else ALL_COMPONENTS
-
-    naics_options, naics_diag = _session_cached_lookup(
-        "NAICS",
-        (pending.agency, component),
-        lambda: naics_option_values(pending.agency, component),
-        loading_text=_loading_message("naics", pending.agency, component),
-        timeout_text=_timeout_message("naics", pending.agency, component),
-        allow_default_only=True,
-    )
-    diagnostics["naics"] = naics_diag
-    if stop_after == "naics":
         return component_options, naics_options, set_asides, location_options, diagnostics
-
-    naics = pending.naics if pending.naics in naics_options else ALL_NAICS
-    naics_code, _naics_description = decode_option(naics)
-
-    set_asides, set_aside_diag = _session_cached_lookup(
-        "Set-Aside",
-        (pending.agency, component, naics_code),
-        lambda: set_aside_option_values(pending.agency, component, naics_code),
-        loading_text=_loading_message("set_aside", pending.agency, component),
-        timeout_text=_timeout_message("set_aside", pending.agency, component),
-        allow_default_only=True,
-    )
-    diagnostics["set_aside"] = set_aside_diag
-    set_aside = pending.set_aside if pending.set_aside in set_asides else ALL_SET_ASIDES
-    set_aside_code, _set_aside_description = decode_option(set_aside)
-    if not set_aside_code and " - " in set_aside:
-        set_aside_code = set_aside.split(" - ", 1)[0]
-
-    location_options, location_diag = _session_cached_lookup(
-        "Performance Location",
-        (pending.agency, component, naics_code, set_aside_code),
-        lambda: location_option_values(pending.agency, component, naics_code, set_aside_code),
-        loading_text=_loading_message("location", pending.agency, component),
-        timeout_text=_timeout_message("location", pending.agency, component),
-        allow_default_only=True,
-    )
-    diagnostics["location"] = location_diag
     return component_options, naics_options, set_asides, location_options, diagnostics
 
 
 def _option_diagnostic_errors(diagnostics: dict) -> dict:
-    required = {"agency", "component", "naics"}
+    required = {"agency", "component"}
     return {
         key: value
         for key, value in diagnostics.items()
@@ -591,15 +556,13 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
     if component != current.component:
         st.session_state.naics_request_generation += 1
         st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
-    component_options, naics_options, set_asides, location_options, naics_diagnostics = _option_sets(refreshed_snapshot, stop_after="naics")
+    component_options, naics_options, set_asides, location_options, naics_diagnostics = _option_sets(refreshed_snapshot)
     diagnostics.update(naics_diagnostics)
     naics_default = current.naics if current.naics in naics_options else ALL_NAICS
     naics_live = _init_filter_widget(NAICS_WIDGET_KEY, naics_default)
     _sync_selectbox_state(NAICS_WIDGET_KEY, naics_options, naics_default)
     naics_live = st.session_state[NAICS_WIDGET_KEY]
-    options_ready = bool(
-        not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE]
-    )
+    options_ready = bool(not date_error and agency and component_options != [UNAVAILABLE])
     focus_step, focus_hint = _filter_guide_step(
         agency,
         component_options,
@@ -614,7 +577,6 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
             "NAICS",
             naics_options,
             format_func=_display_option,
-            disabled=naics_options == [UNAVAILABLE],
             key=NAICS_WIDGET_KEY,
         )
     if naics == UNAVAILABLE:
@@ -650,20 +612,6 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
                 format_func=_display_option,
                 key=SET_ASIDE_WIDGET_KEY,
             )
-            naics_code, _ = decode_option(naics)
-            set_aside_code, _ = decode_option(set_aside)
-            if not set_aside_code and " - " in set_aside:
-                set_aside_code = set_aside.split(" - ", 1)[0]
-            location_options, location_diag = _session_cached_lookup(
-                "Performance Location",
-                (agency, component, naics_code, set_aside_code),
-                lambda: location_option_values(agency, component, naics_code, set_aside_code),
-                loading_text=_loading_message("location", agency, component),
-                timeout_text=_timeout_message("location", agency, component),
-                allow_default_only=True,
-            )
-            if location_diag.get("error"):
-                diagnostics["location"] = location_diag
             location_default = current.location if current.location in location_options else ALL_LOCATIONS
             location_live = _init_filter_widget(LOCATION_WIDGET_KEY, location_default)
             if location_live not in location_options:
@@ -677,7 +625,7 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
             )
     else:
         with st.expander("Optional refinements", expanded=False):
-            st.caption("Select an agency to load set-aside and performance location options.")
+            st.caption("Select an agency to enable optional set-aside and performance location filters.")
 
     start_date, end_date, date_error = render_date_range(current)
     if date_error:
@@ -685,7 +633,7 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
 
     snapshot = FilterSnapshot(agency=agency, component=component, naics=naics, set_aside=set_aside, location=location, start_date=start_date, end_date=end_date)
     st.session_state.pending_snapshot = snapshot
-    ready = bool(not date_error and agency and component_options != [UNAVAILABLE] and naics_options != [UNAVAILABLE])
+    ready = bool(not date_error and agency and component_options != [UNAVAILABLE])
     guide_step, guide_hint = _filter_guide_step(
         agency,
         component_options,
