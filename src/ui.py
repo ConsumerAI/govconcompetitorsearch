@@ -35,7 +35,7 @@ from .state import (
     snapshots_differ,
 )
 from .usaspending import fetch_transactions_for_snapshot
-from .utils import decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url
+from .utils import decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url, warm_recipient_profile_cache
 
 UNAVAILABLE = "Unable to load options"
 _RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
@@ -864,9 +864,9 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
                 st.rerun()
 
 
-def _contractor_link_markup(name: str, *, profile_link: str = "") -> str:
+def _contractor_link_markup(name: str, *, uei: str = "") -> str:
     contractor = html.escape(name)
-    link = profile_link or usaspending_recipient_profile_url("", name)
+    link = usaspending_recipient_profile_url(uei, name)
     if not link:
         return contractor
     return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
@@ -882,7 +882,7 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     rows = []
     for row in leaderboard.to_dict("records"):
         name = str(row.get("Contractor Name") or "")
-        profile_link = str(row.get("Recipient Profile Link") or "")
+        contractor_uei = str(row.get("Primary UEI") or "")
         obligations = format_full_money(row.get("Obligations in Scope"))
         share = format_percent(row.get("Market Share"))
         unique_awards = int(row.get("Unique Awards") or 0)
@@ -891,7 +891,7 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
-            f"<td>{_contractor_link_markup(name, profile_link=profile_link)}</td>"
+            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
             f"<td>{html.escape(obligations)}</td>"
             f"<td>{html.escape(share)}</td>"
             f"<td>{unique_awards:,}</td>"
@@ -959,7 +959,7 @@ def render_concentration(concentration: dict) -> None:
     for row in concentration["breakdown"]:
         contractor_markup = _contractor_link_markup(
             str(row["contractor"]),
-            profile_link=str(row.get("recipient_profile_link") or ""),
+            uei=str(row.get("primary_uei") or ""),
         )
         st.markdown(
             f"""
@@ -993,7 +993,7 @@ def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None
         award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
         contractor_markup = _contractor_link_markup(
             str(row.get("Contractor") or ""),
-            profile_link=str(row.get("Recipient Profile Link") or ""),
+            uei=str(row.get("Recipient UEI") or ""),
         )
         rows.append(
             "<tr>"
@@ -1101,6 +1101,11 @@ def main() -> None:
     analyzed = st.session_state.analyzed_snapshot
     if results is None or analyzed is None:
         return
+    transactions = results.get("transactions")
+    if transactions is not None and not transactions.empty:
+        warm_recipient_profile_cache(
+            list(transactions["recipient_uei"].tolist()) + list(transactions["recipient_name"].tolist())
+        )
     config = get_agency_component_config(analyzed.agency)
     render_applied_filters(analyzed, config["label"])
     render_scope_line(results)

@@ -193,8 +193,8 @@ class FilterAndOutputTests(unittest.TestCase):
         with mock.patch("src.utils._recipient_id_for_keyword", return_value="recipient-id-C"):
             awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         self.assertTrue(awards["USAspending Award Link"].str.startswith("https://www.usaspending.gov/award/").any())
-        self.assertIn("Recipient Profile Link", awards.columns)
-        self.assertTrue(awards["Recipient Profile Link"].str.contains("/recipient/recipient-id-C/latest").any())
+        self.assertIn("Recipient UEI", awards.columns)
+        self.assertEqual(awards["Recipient UEI"].iloc[0], "UEI111")
 
     def test_recipient_links_use_search_endpoint(self):
         from unittest import mock
@@ -204,9 +204,8 @@ class FilterAndOutputTests(unittest.TestCase):
         with mock.patch("src.utils._recipient_id_for_keyword", return_value="e99f3811-0315-a3e0-91f1-b344d22529b8-C"):
             scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
             leaderboard = competitor_leaderboard(scoped)
-            self.assertIn("Recipient Profile Link", leaderboard.columns)
-            self.assertTrue(leaderboard["Recipient Profile Link"].str.contains("/recipient/").all())
-            self.assertTrue(leaderboard["Recipient Profile Link"].str.endswith("/latest").all())
+            self.assertIn("Primary UEI", leaderboard.columns)
+            self.assertEqual(leaderboard["Primary UEI"].iloc[0], "UEI111")
             url = usaspending_recipient_profile_url("UEI111", "Acme Global LLC")
             self.assertEqual(
                 url,

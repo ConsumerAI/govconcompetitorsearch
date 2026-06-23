@@ -246,7 +246,7 @@ def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Rank",
         "Contractor Name",
-        "Recipient Profile Link",
+        "Primary UEI",
         "Obligations in Scope",
         "Market Share",
         "Unique Awards",
@@ -269,10 +269,7 @@ def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     )
     grouped["Rank"] = grouped.index + 1
     grouped["Contractor Name"] = grouped["contractor_name"]
-    grouped["Recipient Profile Link"] = grouped.apply(
-        lambda row: usaspending_recipient_profile_url(str(row["primary_uei"] or ""), str(row["contractor_name"])),
-        axis=1,
-    )
+    grouped["Primary UEI"] = grouped["primary_uei"]
     grouped["Obligations in Scope"] = grouped["obligations"]
     grouped["Market Share"] = grouped["obligations"].apply(lambda amount: amount / total_net if abs(total_net) >= 0.005 else None)
     grouped["Unique Awards"] = grouped["unique_awards"].astype(int)
@@ -309,12 +306,9 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
         "breakdown": [
             {
                 "contractor": row["contractor"],
+                "primary_uei": str(row["primary_uei"] or ""),
                 "amount": float(row["amount"]),
                 "share": float(row["amount"]) / positive_total,
-                "recipient_profile_link": usaspending_recipient_profile_url(
-                    str(row["primary_uei"] or ""),
-                    str(row["contractor"]),
-                ),
             }
             for row in top.to_dict("records")
         ],
@@ -325,7 +319,7 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
 def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Contractor",
-        "Recipient Profile Link",
+        "Recipient UEI",
         "Award ID",
         "Description",
         "Obligations in Scope",
@@ -346,7 +340,7 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "Contractor": contractor_name,
-                "Recipient Profile Link": usaspending_recipient_profile_url(contractor_uei, contractor_name),
+                "Recipient UEI": contractor_uei,
                 "Award ID": latest["award_id_piid"],
                 "Description": latest["transaction_description"],
                 "Obligations in Scope": float(group["federal_action_obligation"].sum()),
