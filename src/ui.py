@@ -220,15 +220,8 @@ def styles() -> None:
             background: rgba(30, 41, 59, 1) !important;
         }
         .applied-filter-chip-slot { display: none; }
-        div[data-testid="stHorizontalBlock"]:has(.award-export-toolbar-slot) {
-            align-items: flex-end !important;
-            gap: .45rem !important;
+        div[data-testid="stHorizontalBlock"]:has(.award-export-button-slot) {
             margin: 0 0 .35rem !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.award-export-toolbar-slot) > div[data-testid="column"]:has(.award-export-button-slot) {
-            width: auto !important;
-            flex: 0 0 auto !important;
-            min-width: 0 !important;
         }
         div[data-testid="column"]:has(.award-export-button-slot) [data-testid="stDownloadButton"] > button {
             border-radius: 6px !important;
@@ -1039,11 +1032,9 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
     file_suffix = "selected-contractors" if contractor_names else "all-contractors"
     visible = awards if contractor_names else awards.head(25)
     caption = f"Showing {len(visible):,} awards. Scroll the table for more." if len(visible) > 15 else ""
-    caption_col, export_col = st.columns([6.2, 1.2], vertical_alignment="bottom")
-    with caption_col:
-        st.markdown('<div class="award-export-toolbar-slot"></div>', unsafe_allow_html=True)
-        if caption:
-            st.caption(caption)
+    if caption:
+        st.caption(caption)
+    export_col, _ = st.columns([1.55, 6.45], vertical_alignment="bottom")
     with export_col:
         st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
         st.download_button(
