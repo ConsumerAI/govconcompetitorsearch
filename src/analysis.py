@@ -17,6 +17,14 @@ from .utils import (
 )
 
 
+def _first_nonempty_text(values: pd.Series) -> str:
+    for value in values:
+        text = clean_text(value)
+        if text:
+            return text
+    return ""
+
+
 def canonical_contractor_name(name: object) -> str:
     text = clean_text(name).upper()
     suffixes = [", INC.", " INC.", ", LLC", " LLC", ", LTD.", " LTD.", " CORPORATION", " CORP."]
@@ -250,7 +258,7 @@ def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
         transactions.groupby("canonical_contractor", as_index=False)
         .agg(
             contractor_name=("recipient_name", "first"),
-            primary_uei=("recipient_uei", "first"),
+            primary_uei=("recipient_uei", _first_nonempty_text),
             obligations=("federal_action_obligation", "sum"),
             unique_awards=("contract_award_unique_key", pd.Series.nunique),
             most_recent=("action_date", "max"),
@@ -286,7 +294,7 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
         positive.groupby("canonical_contractor", as_index=False)
         .agg(
             contractor=("recipient_name", "first"),
-            primary_uei=("recipient_uei", "first"),
+            primary_uei=("recipient_uei", _first_nonempty_text),
             amount=("federal_action_obligation", "sum"),
         )
         .sort_values("amount", ascending=False)
@@ -316,6 +324,7 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
 def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Contractor",
+        "Recipient Profile Link",
         "Award ID",
         "Description",
         "Obligations in Scope",
@@ -332,7 +341,7 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
     for award_key, group in transactions.groupby("contract_award_unique_key", dropna=False):
         latest = group.sort_values(["action_date", "row_order"], na_position="first").iloc[-1]
         contractor_name = latest["recipient_name"]
-        contractor_uei = clean_text(latest["recipient_uei"])
+        contractor_uei = _first_nonempty_text(group["recipient_uei"])
         rows.append(
             {
                 "Contractor": contractor_name,

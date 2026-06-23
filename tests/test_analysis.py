@@ -190,6 +190,8 @@ class FilterAndOutputTests(unittest.TestCase):
     def test_award_links_are_retained(self):
         awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         self.assertTrue(awards["USAspending Award Link"].str.startswith("https://www.usaspending.gov/award/").any())
+        self.assertIn("Recipient Profile Link", awards.columns)
+        self.assertTrue(awards["Recipient Profile Link"].str.contains("recipient_search_text=UEI111").any())
 
     def test_recipient_links_use_search_endpoint(self):
         from src.utils import usaspending_recipient_profile_url

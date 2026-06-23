@@ -210,7 +210,8 @@ def styles() -> None:
             background: rgba(30, 41, 59, 1) !important;
         }
         .applied-filter-chip-slot { display: none; }
-        .award-drilldown-table-wrap, .competitor-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
+        .competitor-table-wrap { overflow-x: auto; overflow-y: auto; max-height: 28rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
+        .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table, .competitor-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
         .award-drilldown-table th, .competitor-table th {
             text-align: left; color: #dbeafe; background: rgba(15,23,42,.96); padding: .65rem .7rem; border-bottom: 1px solid var(--border);
@@ -863,12 +864,12 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
                 st.rerun()
 
 
-def _contractor_link_markup(name: str, profile_link: str = "") -> str:
+def _contractor_link_markup(name: str, *, profile_link: str = "") -> str:
     contractor = html.escape(name)
     link = profile_link or usaspending_recipient_profile_url("", name)
     if not link:
         return contractor
-    return f'<a href="{html.escape(link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
+    return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
@@ -876,6 +877,8 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
         return
+    if len(leaderboard) > 15:
+        st.caption(f"Showing all {len(leaderboard):,} contractors. Scroll the table for more.")
     rows = []
     for row in leaderboard.to_dict("records"):
         name = str(row.get("Contractor Name") or "")
@@ -888,7 +891,7 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
-            f"<td>{_contractor_link_markup(name, profile_link)}</td>"
+            f"<td>{_contractor_link_markup(name, profile_link=profile_link)}</td>"
             f"<td>{html.escape(obligations)}</td>"
             f"<td>{html.escape(share)}</td>"
             f"<td>{unique_awards:,}</td>"
@@ -956,7 +959,7 @@ def render_concentration(concentration: dict) -> None:
     for row in concentration["breakdown"]:
         contractor_markup = _contractor_link_markup(
             str(row["contractor"]),
-            usaspending_recipient_profile_url("", str(row["contractor"])),
+            profile_link=str(row.get("recipient_profile_link") or ""),
         )
         st.markdown(
             f"""
@@ -987,10 +990,10 @@ def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None
     for row in visible.to_dict("records"):
         award_link = row.get("USAspending Award Link") or ""
         award = html.escape(str(row.get("Award ID") or "Unavailable"))
-        award_markup = f'<a href="{html.escape(award_link)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
+        award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
         contractor_markup = _contractor_link_markup(
             str(row.get("Contractor") or ""),
-            usaspending_recipient_profile_url("", str(row.get("Contractor") or "")),
+            profile_link=str(row.get("Recipient Profile Link") or ""),
         )
         rows.append(
             "<tr>"

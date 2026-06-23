@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 
@@ -100,7 +100,8 @@ def usaspending_recipient_search_url(query: str) -> str:
     text = clean_text(query)
     if not text:
         return ""
-    return f"https://www.usaspending.gov/search/?hash=recipient&recipient_search_text={quote(text)}"
+    params = urlencode({"hash": "recipient", "recipient_search_text": text})
+    return f"https://www.usaspending.gov/search/?{params}"
 
 
 def usaspending_recipient_profile_url(uei: str = "", name: str = "") -> str:
