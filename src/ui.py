@@ -220,6 +220,34 @@ def styles() -> None:
             background: rgba(30, 41, 59, 1) !important;
         }
         .applied-filter-chip-slot { display: none; }
+        div[data-testid="stHorizontalBlock"]:has(.award-export-toolbar-slot) {
+            align-items: flex-end !important;
+            gap: .45rem !important;
+            margin: 0 0 .35rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.award-export-toolbar-slot) > div[data-testid="column"]:has(.award-export-button-slot) {
+            width: auto !important;
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+        }
+        div[data-testid="column"]:has(.award-export-button-slot) [data-testid="stDownloadButton"] > button {
+            border-radius: 6px !important;
+            border: 1px solid rgba(148, 163, 184, 0.28) !important;
+            background: rgba(30, 41, 59, 0.96) !important;
+            color: #e5edf8 !important;
+            font-size: .78rem !important;
+            font-weight: 650 !important;
+            padding: .32rem .7rem !important;
+            box-shadow: none !important;
+            min-height: unset !important;
+            white-space: nowrap !important;
+            width: auto !important;
+        }
+        div[data-testid="column"]:has(.award-export-button-slot) [data-testid="stDownloadButton"] > button:hover {
+            border-color: rgba(56, 189, 248, 0.5) !important;
+            background: rgba(30, 41, 59, 1) !important;
+        }
+        .award-export-toolbar-slot, .award-export-button-slot { display: none; }
         .competitor-table-wrap { overflow-x: auto; overflow-y: auto; max-height: 28rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap.is-scrollable { overflow-y: auto; max-height: 28rem; }
@@ -1004,32 +1032,37 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         title = f"Top Relevant Awards — {_contractor_selection_label(contractor_names)}"
     else:
         awards = award_table(transactions)
-    title_col, export_col = st.columns([4, 1])
-    with title_col:
-        st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
     if awards.empty:
         st.info("No award rows found for this scope.")
         return
     export_df = build_awards_export_frame(awards)
     file_suffix = "selected-contractors" if contractor_names else "all-contractors"
-    with export_col:
+    visible = awards if contractor_names else awards.head(25)
+    caption = f"Showing {len(visible):,} awards. Scroll the table for more." if len(visible) > 15 else ""
+    caption_col, csv_col, xlsx_col = st.columns([6.4, 0.7, 0.7], vertical_alignment="bottom")
+    with caption_col:
+        st.markdown('<div class="award-export-toolbar-slot"></div>', unsafe_allow_html=True)
+        if caption:
+            st.caption(caption)
+    with csv_col:
+        st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
         st.download_button(
-            "Export CSV",
+            "CSV",
             data=awards_export_csv(export_df),
             file_name=f"top-relevant-awards-{file_suffix}.csv",
             mime="text/csv",
-            use_container_width=True,
+            key=f"awards-export-csv-{file_suffix}",
         )
+    with xlsx_col:
+        st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
         st.download_button(
-            "Export Excel",
+            "Excel",
             data=awards_export_xlsx(export_df),
             file_name=f"top-relevant-awards-{file_suffix}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            key=f"awards-export-xlsx-{file_suffix}",
         )
-    visible = awards if contractor_names else awards.head(25)
-    if len(visible) > 15:
-        st.caption(f"Showing {len(visible):,} awards. Scroll the table for more.")
     scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
     rows = []
     for row in visible.to_dict("records"):
