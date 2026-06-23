@@ -102,5 +102,64 @@ class ApiFailureTests(unittest.TestCase):
         self.assertIsNone(session["results"])
 
 
+class DownloadResilienceTests(unittest.TestCase):
+    def test_transient_error_detection(self):
+        from src.usaspending import _is_transient_download_error
+
+        self.assertTrue(_is_transient_download_error({"response_body": "RemoteDisconnected"}))
+        self.assertFalse(_is_transient_download_error({"response_body": "download appears capped or truncated"}))
+
+    def test_segment_retries_transient_failure(self):
+        from src.usaspending import fetch_transactions_uncached
+
+        ok_row = {
+            "contract_award_unique_key": "K1",
+            "award_id_piid": "P1",
+            "transaction_number": "1",
+            "action_date": "2025-10-01",
+            "federal_action_obligation": "10",
+            "recipient_name": "A",
+            "awarding_agency_name": "Department of Agriculture",
+        }
+        ok_diag = {
+            "payload": {},
+            "diagnostics": {
+                "api_reported_total_rows": 1,
+                "limit_reached": False,
+                "truncation_detected": False,
+                "row_count": 1,
+            },
+        }
+        fail_diag = {
+            "error": {
+                "endpoint": "/api/v2/download/transactions/",
+                "response_body": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))",
+            }
+        }
+        with patch("src.usaspending.fetch_transaction_download_rows", side_effect=[([], fail_diag), ([ok_row], ok_diag)]):
+            with patch("src.usaspending.time.sleep"):
+                rows, diag = fetch_transactions_uncached(
+                    "Department of Agriculture",
+                    "Farm Service Agency",
+                    ALL_NAICS,
+                    ALL_SET_ASIDES,
+                    ALL_LOCATIONS,
+                    "2025-10-01",
+                    "2026-06-15",
+                    query_fingerprint(
+                        FilterSnapshot(
+                            agency="Department of Agriculture",
+                            component="Farm Service Agency",
+                            start_date="2025-10-01",
+                            end_date="2026-06-15",
+                        )
+                    )
+                    + "-retry-test",
+                    max_pages=0,
+                )
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(diag["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

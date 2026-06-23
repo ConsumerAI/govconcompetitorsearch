@@ -12,6 +12,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -118,6 +120,63 @@ def request_headers() -> dict:
         "Accept": "application/json",
         "User-Agent": "govcon-competitor-finder/1.0",
     }
+
+
+DOWNLOAD_GET_ATTEMPTS = 5
+SEGMENT_ATTEMPTS = 3
+FILE_DOWNLOAD_TIMEOUT = 60
+
+
+@functools.lru_cache(maxsize=1)
+def _http_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=DOWNLOAD_GET_ATTEMPTS,
+        connect=DOWNLOAD_GET_ATTEMPTS,
+        read=DOWNLOAD_GET_ATTEMPTS,
+        backoff_factor=1.5,
+        status_forcelist=(502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_maxsize=4)
+    session.mount("https://", adapter)
+    return session
+
+
+def _get_with_retries(url: str, *, timeout: int, attempts: int = DOWNLOAD_GET_ATTEMPTS) -> tuple[requests.Response | None, str | None]:
+    session = _http_session()
+    headers = request_headers()
+    last_error = ""
+    for attempt in range(attempts):
+        try:
+            response = session.get(url, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            return response, None
+        except requests.RequestException as exc:
+            last_error = str(exc)
+            if attempt + 1 < attempts:
+                time.sleep(min(1.5 * (2**attempt), 12.0))
+                continue
+    return None, last_error
+
+
+def _is_transient_download_error(diagnostics: dict) -> bool:
+    body = str(diagnostics.get("response_body") or "")
+    transient_markers = (
+        "RemoteDisconnected",
+        "Connection aborted",
+        "Connection reset",
+        "Connection refused",
+        "Read timed out",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "timed out",
+        "502",
+        "503",
+        "504",
+    )
+    return any(marker in body for marker in transient_markers)
 
 
 def post_usaspending(endpoint: str, payload: dict, timeout: int = 24) -> tuple[dict | None, ApiFailure | None]:
@@ -828,13 +887,21 @@ def fetch_transaction_download_rows(
     status_url = data.get("status_url") if isinstance(data, dict) else ""
     file_url = data.get("file_url") if isinstance(data, dict) else ""
     while status_url and time.monotonic() - started_at < max_elapsed:
+        response, poll_error = _get_with_retries(status_url, timeout=timeout)
+        if poll_error:
+            diagnostics["response_body"] = poll_error
+            if time.monotonic() - started_at < max_elapsed - 5:
+                time.sleep(1.5)
+                continue
+            return [], {"error": diagnostics}
+        diagnostics["status_code"] = response.status_code
         try:
-            response = requests.get(status_url, headers=request_headers(), timeout=timeout)
-            diagnostics["status_code"] = response.status_code
-            response.raise_for_status()
             status_payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
+        except ValueError as exc:
             diagnostics["response_body"] = str(exc)
+            if time.monotonic() - started_at < max_elapsed - 5:
+                time.sleep(1.5)
+                continue
             return [], {"error": diagnostics}
         diagnostics["status_poll_responses"].append(status_payload)
         if str(status_payload.get("status") or "").lower() == "failed":
@@ -848,9 +915,11 @@ def fetch_transaction_download_rows(
         diagnostics["response_body"] = "download job timed out or did not return file_url"
         return [], {"error": diagnostics}
     try:
-        file_response = requests.get(file_url, headers=request_headers(), timeout=timeout)
+        file_response, download_error = _get_with_retries(file_url, timeout=max(timeout, FILE_DOWNLOAD_TIMEOUT))
+        if download_error:
+            diagnostics["response_body"] = download_error
+            return [], {"error": diagnostics}
         diagnostics["status_code"] = file_response.status_code
-        file_response.raise_for_status()
         rows: list[dict] = []
         with zipfile.ZipFile(io.BytesIO(file_response.content)) as archive:
             diagnostics["files_returned"] = archive.namelist()
@@ -930,10 +999,21 @@ def fetch_transactions_uncached(
         if progress_callback:
             progress_callback(f"Loading competitor data: {index} of {len(segments)} periods")
         segment_snapshot = snapshot_for_segment(snapshot, segment)
-        download_rows, download_diag = fetch_transaction_download_rows(segment_snapshot)
-        if download_diag.get("error"):
-            error = dict(download_diag["error"])
+        download_rows: list[dict] = []
+        download_diag: dict = {}
+        for attempt in range(1, SEGMENT_ATTEMPTS + 1):
+            download_rows, download_diag = fetch_transaction_download_rows(segment_snapshot)
+            if not download_diag.get("error"):
+                break
+            error_diag = download_diag["error"]
+            if attempt < SEGMENT_ATTEMPTS and _is_transient_download_error(error_diag):
+                if progress_callback:
+                    progress_callback(f"Retrying period {index} of {len(segments)} (attempt {attempt + 1})")
+                time.sleep(2 * attempt)
+                continue
+            error = dict(error_diag)
             error["segment"] = segment
+            error["attempts"] = attempt
             return normalize_transactions([], default_agency=agency), {
                 "payloads": payloads + [transaction_download_payload(segment_snapshot)],
                 "segments": segment_diagnostics,
@@ -947,6 +1027,8 @@ def fetch_transactions_uncached(
         segment_diag["segment"] = segment
         segment_diagnostics.append(segment_diag)
         all_download_rows.extend(download_rows)
+        if index < len(segments):
+            time.sleep(0.25)
     if progress_callback:
         progress_callback("Combining transaction data")
     if all_download_rows:
