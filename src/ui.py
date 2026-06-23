@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from .agency_components import get_agency_component_config
-from .analysis import analyze, contractor_detail, filter_transactions
+from .analysis import analyze, award_table, canonical_contractor_name, contractor_detail, filter_transactions
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
 from .global_filter_options import (
     global_location_option_values,
@@ -26,7 +26,14 @@ from .option_index import (
     index_freshness,
     validate_index,
 )
-from .state import FilterSnapshot, active_filter_chips, add_calendar_years, default_end_date, default_start_date, snapshots_differ
+from .state import (
+    FilterSnapshot,
+    active_filter_chip_entries,
+    add_calendar_years,
+    default_end_date,
+    default_start_date,
+    snapshots_differ,
+)
 from .usaspending import fetch_transactions_for_snapshot
 from .utils import decode_option, format_full_money, format_money, format_option, format_percent
 
@@ -37,6 +44,7 @@ COMPONENT_WIDGET_KEY = "filter_component"
 NAICS_WIDGET_KEY = "filter_naics"
 SET_ASIDE_WIDGET_KEY = "filter_set_aside"
 LOCATION_WIDGET_KEY = "filter_location"
+CONTRACTOR_WIDGET_KEY = "selected_contractor"
 INDEX_DEPLOYMENT_ERROR = (
     "Competitor filters are temporarily unavailable because the option index was not included in this deployment."
 )
@@ -55,6 +63,7 @@ def init_streamlit_state() -> None:
     st.session_state.setdefault("component_request_generation", 0)
     st.session_state.setdefault("naics_request_generation", 0)
     st.session_state.setdefault("option_index_refresh_needed", False)
+    st.session_state.setdefault("selected_contractor", "")
 
 
 def styles() -> None:
@@ -94,6 +103,11 @@ def styles() -> None:
             min-height: 42px;
         }
         [data-baseweb="select"] span, [data-baseweb="select"] input { color: var(--text) !important; }
+        [data-baseweb="select"] input::placeholder {
+            color: #9ca3af !important;
+            opacity: 1 !important;
+            font-style: italic;
+        }
         [data-testid="stDateInput"] label { color: var(--text) !important; font-weight: 650; }
         [data-testid="stDateInput"] input {
             background: rgba(15, 23, 42, 0.96) !important;
@@ -170,8 +184,26 @@ def styles() -> None:
         .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .25rem; }
         .applied-filter-chip {
             display: inline-block; color: #dbeafe; border: 1px solid rgba(56,189,248,.34);
-            background: rgba(14, 165, 233, .12); border-radius: 999px; padding: .25rem .62rem; margin: 0 .35rem .35rem 0;
+            background: rgba(14, 165, 233, .12); border-radius: 999px; padding: .25rem .62rem; margin: 0;
             font-size: .82rem; font-weight: 650;
+        }
+        .applied-filter-chip-row {
+            display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-bottom: .35rem;
+        }
+        .applied-filter-chip-item {
+            display: inline-flex; align-items: center; gap: .35rem;
+            border: 1px solid rgba(56,189,248,.34); background: rgba(14, 165, 233, .12);
+            border-radius: 999px; padding: .18rem .18rem .18rem .62rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-item) button {
+            border: 1px solid rgba(251,113,133,.55) !important;
+            color: #fb7185 !important;
+            background: rgba(251,113,133,.12) !important;
+            min-height: 28px !important;
+            min-width: 28px !important;
+            padding: 0 .35rem !important;
+            font-weight: 800 !important;
+            box-shadow: none !important;
         }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
@@ -180,6 +212,7 @@ def styles() -> None:
         }
         .award-drilldown-table td { color: #e5edf8; padding: .58rem .7rem; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
         .award-drilldown-table tr:nth-child(even) td { background: rgba(15,23,42,.42); }
+        .market-concentration-legend-name a { color: #67e8f9; text-decoration: none; font-weight: 750; }
         .award-drilldown-table a { color: #67e8f9; text-decoration: none; font-weight: 750; }
         .market-concentration-legend-row {
             display: flex; justify-content: space-between; gap: .8rem; padding: .55rem .65rem;
@@ -198,12 +231,27 @@ def _safe_index(options: list[str], value: str) -> int:
     return options.index(value) if value in options else 0
 
 
-def _display_option(value: str) -> str:
-    if value in {"", UNAVAILABLE, ALL_COMPONENTS, ALL_NAICS, ALL_SET_ASIDES, ALL_LOCATIONS}:
-        return value or "Select agency"
+def _option_label(value: str) -> str:
     if "||" in value:
         return format_option(value).replace(" - ", " — ")
     return value
+
+
+_SEARCH_HELP = "Type in the field to search and filter the list."
+
+
+def _agency_option_label(value: str) -> str:
+    if value in {"", UNAVAILABLE}:
+        return "Start typing agency name..."
+    return _option_label(value)
+
+
+def _broad_filter_option_label(value: str, broad_value: str, placeholder: str) -> str:
+    if value == UNAVAILABLE:
+        return placeholder
+    if value == broad_value:
+        return f"{broad_value} — type to search"
+    return _option_label(value)
 
 
 def _parse_snapshot_date(value: str) -> date:
@@ -496,7 +544,9 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         agency = st.selectbox(
             "Agency",
             agency_options,
-            format_func=_display_option,
+            format_func=_agency_option_label,
+            placeholder="Start typing agency name...",
+            help=_SEARCH_HELP,
             disabled=not agency_ok,
             key=AGENCY_WIDGET_KEY,
         )
@@ -537,7 +587,13 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         component = st.selectbox(
             component_config["label"],
             component_options,
-            format_func=_display_option,
+            format_func=lambda value: _broad_filter_option_label(
+                value,
+                ALL_COMPONENTS,
+                f"Start typing {component_config['label'].lower()}...",
+            ),
+            placeholder=f"Start typing {component_config['label'].lower()}...",
+            help=_SEARCH_HELP,
             disabled=component_options == [UNAVAILABLE],
             key=COMPONENT_WIDGET_KEY,
         )
@@ -576,7 +632,13 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
         naics = st.selectbox(
             "NAICS",
             naics_options,
-            format_func=_display_option,
+            format_func=lambda value: _broad_filter_option_label(
+                value,
+                ALL_NAICS,
+                "Start typing NAICS code or name...",
+            ),
+            placeholder="Start typing NAICS code or name...",
+            help=_SEARCH_HELP,
             key=NAICS_WIDGET_KEY,
         )
     if naics == UNAVAILABLE:
@@ -609,7 +671,13 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
             set_aside = st.selectbox(
                 "Set-Aside",
                 set_asides,
-                format_func=_display_option,
+                format_func=lambda value: _broad_filter_option_label(
+                    value,
+                    ALL_SET_ASIDES,
+                    "Start typing set-aside type...",
+                ),
+                placeholder="Start typing set-aside type...",
+                help=_SEARCH_HELP,
                 key=SET_ASIDE_WIDGET_KEY,
             )
             location_default = current.location if current.location in location_options else ALL_LOCATIONS
@@ -620,7 +688,13 @@ def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
             location = st.selectbox(
                 "Performance Location",
                 location_options,
-                format_func=_display_option,
+                format_func=lambda value: _broad_filter_option_label(
+                    value,
+                    ALL_LOCATIONS,
+                    "Start typing performance location...",
+                ),
+                placeholder="Start typing performance location...",
+                help=_SEARCH_HELP,
                 key=LOCATION_WIDGET_KEY,
             )
     else:
@@ -684,18 +758,174 @@ def render_scope_line(results: dict) -> None:
         st.caption(f"Competitor activity from {_date_label(start_date, long=True)} through {_date_label(end_date, long=True)}")
 
 
-def render_leaderboard(leaderboard: pd.DataFrame) -> str:
+def _requires_download(previous: FilterSnapshot, pending: FilterSnapshot) -> bool:
+    return (previous.agency, previous.start_date, previous.end_date) != (
+        pending.agency,
+        pending.start_date,
+        pending.end_date,
+    )
+
+
+def _snapshot_after_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> FilterSnapshot | None:
+    if chip_id == "agency":
+        st.session_state[AGENCY_WIDGET_KEY] = ""
+        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
+        st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+        st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+        return None
+    pending = FilterSnapshot(
+        agency=analyzed.agency,
+        component=ALL_COMPONENTS if chip_id == "component" else analyzed.component,
+        naics=ALL_NAICS if chip_id == "naics" else analyzed.naics,
+        set_aside=ALL_SET_ASIDES if chip_id == "set_aside" else analyzed.set_aside,
+        location=ALL_LOCATIONS if chip_id == "location" else analyzed.location,
+        start_date=default_start_date() if chip_id == "period" else analyzed.start_date,
+        end_date=default_end_date() if chip_id == "period" else analyzed.end_date,
+    )
+    if chip_id == "component":
+        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+    elif chip_id == "naics":
+        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
+    elif chip_id == "set_aside":
+        st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+    elif chip_id == "location":
+        st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+    elif chip_id == "period":
+        st.session_state.date_from = _parse_snapshot_date(pending.start_date)
+        st.session_state.date_through = _parse_snapshot_date(pending.end_date)
+    st.session_state.pending_snapshot = pending
+    return pending
+
+
+def _apply_analysis_snapshot(pending: FilterSnapshot, *, download: bool) -> None:
+    diagnostic: dict = {}
+    if download or st.session_state.base_transactions.empty:
+        transactions, diagnostic = fetch_transactions_for_snapshot(pending)
+        st.session_state.last_data_diagnostics = diagnostic
+        if diagnostic.get("error"):
+            st.session_state.last_data_error = diagnostic["error"]
+            return
+        st.session_state.last_data_error = ""
+        st.session_state.base_transactions = transactions
+    else:
+        transactions = st.session_state.base_transactions
+        diagnostic = st.session_state.last_data_diagnostics or {}
+
+    scoped = filter_transactions(transactions, pending)
+    period = diagnostic.get("period") or {}
+    if not download and st.session_state.analysis_results:
+        period = period or st.session_state.analysis_results.get("period", {})
+    analyzed_snapshot = FilterSnapshot(
+        agency=pending.agency,
+        component=pending.component,
+        naics=pending.naics,
+        set_aside=pending.set_aside,
+        location=pending.location,
+        start_date=period.get("start_date", pending.start_date),
+        end_date=period.get("end_date", pending.end_date),
+    )
+    st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
+    st.session_state.analyzed_snapshot = analyzed_snapshot
+
+
+def _handle_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> None:
+    pending = _snapshot_after_chip_removal(chip_id, analyzed)
+    st.session_state.selected_contractor = ""
+    if pending is None:
+        st.session_state.analysis_results = None
+        st.session_state.analyzed_snapshot = None
+        st.session_state.base_transactions = pd.DataFrame()
+        return
+    _apply_analysis_snapshot(pending, download=_requires_download(analyzed, pending))
+
+
+def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> None:
+    chips = active_filter_chip_entries(analyzed, component_label)
+    if not chips:
+        return
+    st.markdown('<div class="applied-filter-heading">Applied filters</div>', unsafe_allow_html=True)
+    chip_cols = st.columns(len(chips))
+    for idx, chip in enumerate(chips):
+        with chip_cols[idx]:
+            label_col, remove_col = st.columns([10, 1], gap="small", vertical_alignment="center")
+            with label_col:
+                st.markdown(
+                    f'<span class="applied-filter-chip">{html.escape(chip["label"])}</span>',
+                    unsafe_allow_html=True,
+                )
+            with remove_col:
+                if st.button("✕", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
+                    _handle_chip_removal(chip["id"], analyzed)
+                    st.rerun()
+
+
+def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     st.markdown('<div class="section-title">Top Competitors</div>', unsafe_allow_html=True)
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
-        return ""
+        return
     display = leaderboard.copy()
     display["Obligations in Scope"] = display["Obligations in Scope"].apply(format_full_money)
     display["Market Share"] = display["Market Share"].apply(format_percent)
     display["Most Recent Action Date"] = display["Most Recent Action Date"].apply(lambda value: value.isoformat() if pd.notna(value) and value else "")
-    st.dataframe(display, use_container_width=True, hide_index=True)
-    options = leaderboard["Contractor Name"].tolist()
-    return st.selectbox("Contractor detail", [""] + options, format_func=lambda value: value or "Select a contractor")
+    st.dataframe(
+        display[
+            [
+                "Rank",
+                "Contractor Name",
+                "Recipient Profile Link",
+                "Obligations in Scope",
+                "Market Share",
+                "Unique Awards",
+                "Most Recent Action Date",
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Recipient Profile Link": st.column_config.LinkColumn("Contractor Name", display_text="Contractor Name"),
+            "Contractor Name": None,
+        },
+        column_order=[
+            "Rank",
+            "Recipient Profile Link",
+            "Obligations in Scope",
+            "Market Share",
+            "Unique Awards",
+            "Most Recent Action Date",
+        ],
+    )
+
+
+def render_contractor_selector(options: list[str]) -> str:
+    st.markdown('<div class="section-title">Contractor Detail</div>', unsafe_allow_html=True)
+    choices = [""] + options
+    current = st.session_state.get(CONTRACTOR_WIDGET_KEY, "")
+    if current and current not in choices:
+        st.session_state[CONTRACTOR_WIDGET_KEY] = ""
+    return st.selectbox(
+        "Choose a contractor to drill down",
+        choices,
+        format_func=lambda value: value or "Start typing contractor name...",
+        placeholder="Start typing contractor name...",
+        help=_SEARCH_HELP,
+        key=CONTRACTOR_WIDGET_KEY,
+        label_visibility="collapsed",
+    )
+
+
+def render_contractor_kpis(transactions: pd.DataFrame, contractor_name: str) -> None:
+    detail = contractor_detail(transactions, contractor_name)
+    if not detail:
+        return
+    st.markdown('<div class="metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">', unsafe_allow_html=True)
+    cols = st.columns(2)
+    with cols[0]:
+        metric_card("Net Obligations", format_money(detail["obligations"]), "Transaction obligations for this contractor", "#38bdf8")
+    with cols[1]:
+        metric_card("Unique Awards", f"{detail['unique_awards']:,}", "Awards for this contractor in scope", "#a78bfa")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_concentration(concentration: dict) -> None:
@@ -714,10 +944,18 @@ def render_concentration(concentration: dict) -> None:
         st.info("No positive obligation transactions in this scope.")
         return
     for row in concentration["breakdown"]:
+        contractor = html.escape(str(row["contractor"]))
+        profile_link = str(row.get("recipient_profile_link") or "")
+        if profile_link:
+            contractor_markup = (
+                f'<a href="{html.escape(profile_link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
+            )
+        else:
+            contractor_markup = contractor
         st.markdown(
             f"""
             <div class="market-concentration-legend-row">
-                <div class="market-concentration-legend-name">{html.escape(row["contractor"])}</div>
+                <div class="market-concentration-legend-name">{contractor_markup}</div>
                 <div class="market-concentration-legend-metrics">{html.escape(format_full_money(row["amount"]))} · {html.escape(format_percent(row["share"]))}</div>
             </div>
             """,
@@ -725,20 +963,35 @@ def render_concentration(concentration: dict) -> None:
         )
 
 
-def render_awards(awards: pd.DataFrame) -> None:
-    st.markdown('<div class="section-title">Top Relevant Awards</div>', unsafe_allow_html=True)
+def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None:
+    title = "Top Relevant Awards"
+    if contractor_name:
+        target = canonical_contractor_name(contractor_name)
+        scoped = transactions[transactions["canonical_contractor"] == target]
+        awards = award_table(scoped)
+        title = f"Top Relevant Awards — {contractor_name}"
+    else:
+        awards = award_table(transactions)
+    st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
     if awards.empty:
         st.info("No award rows found for this scope.")
         return
     visible = awards.head(25).copy()
     rows = []
     for row in visible.to_dict("records"):
-        link = row.get("USAspending Award Link") or ""
+        award_link = row.get("USAspending Award Link") or ""
         award = html.escape(str(row.get("Award ID") or "Unavailable"))
-        award_markup = f'<a href="{html.escape(link)}" target="_blank" rel="noopener noreferrer">{award}</a>' if link else award
+        award_markup = f'<a href="{html.escape(award_link)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
+        contractor = html.escape(str(row.get("Contractor") or ""))
+        profile_link = str(row.get("Recipient Profile Link") or "")
+        contractor_markup = (
+            f'<a href="{html.escape(profile_link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
+            if profile_link
+            else contractor
+        )
         rows.append(
             "<tr>"
-            f"<td>{html.escape(str(row.get('Contractor') or ''))}</td>"
+            f"<td>{contractor_markup}</td>"
             f"<td>{award_markup}</td>"
             f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
             f"<td>{html.escape(format_full_money(row.get('Obligations in Scope')))}</td>"
@@ -766,7 +1019,7 @@ def render_detail(results: dict, contractor_name: str) -> None:
     detail = contractor_detail(results["transactions"], contractor_name)
     if not detail:
         return
-    with st.expander(f"Contractor Detail - {detail['contractor_name']}", expanded=True):
+    with st.expander(f"More detail — {detail['contractor_name']}", expanded=False):
         st.write(
             f"{format_full_money(detail['obligations'])} in scope, "
             f"{format_percent(detail['market_share'])} market share, "
@@ -774,8 +1027,12 @@ def render_detail(results: dict, contractor_name: str) -> None:
         )
         if detail["recipient_entities"]:
             st.markdown("Recipient entities")
-            st.dataframe(pd.DataFrame(detail["recipient_entities"]), use_container_width=True, hide_index=True, column_config={"recipient_link": st.column_config.LinkColumn("USAspending recipient search")})
-        render_awards(detail["top_awards"])
+            st.dataframe(
+                pd.DataFrame(detail["recipient_entities"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={"recipient_link": st.column_config.LinkColumn("USAspending recipient profile")},
+            )
         st.markdown("Location mix")
         st.dataframe(detail["location_mix"], use_container_width=True, hide_index=True)
         st.markdown("NAICS mix")
@@ -828,6 +1085,7 @@ def main() -> None:
                     )
                     st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
                     st.session_state.analyzed_snapshot = analyzed_snapshot
+                    st.session_state.selected_contractor = ""
                     if not transactions.empty:
                         st.session_state.base_transactions = transactions
             progress.empty()
@@ -838,14 +1096,15 @@ def main() -> None:
     if results is None or analyzed is None:
         return
     config = get_agency_component_config(analyzed.agency)
-    chips = active_filter_chips(analyzed, config["label"])
-    if chips:
-        st.markdown('<div class="applied-filter-heading">Applied filters</div>', unsafe_allow_html=True)
-        st.markdown("".join(f'<span class="applied-filter-chip">{html.escape(chip)}</span>' for chip in chips), unsafe_allow_html=True)
+    render_applied_filters(analyzed, config["label"])
     render_scope_line(results)
     render_kpis(results)
-    selected_contractor = render_leaderboard(results["leaderboard"])
+    render_leaderboard(results["leaderboard"])
     st.markdown('<div class="section-title">Market Concentration</div>', unsafe_allow_html=True)
     render_concentration(results["concentration"])
-    render_awards(results["awards"])
+    contractor_options = results["leaderboard"]["Contractor Name"].tolist() if not results["leaderboard"].empty else []
+    selected_contractor = render_contractor_selector(contractor_options)
+    if selected_contractor:
+        render_contractor_kpis(results["transactions"], selected_contractor)
+    render_awards(results["transactions"], selected_contractor)
     render_detail(results, selected_contractor)

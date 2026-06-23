@@ -7,7 +7,14 @@ import pandas as pd
 from .agency_components import get_agency_component_config
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, COUNTRY_NAMES, OPTION_SEPARATOR, STATE_OPTIONS
 from .state import FilterSnapshot
-from .utils import clean_text, first_present, parse_amount, parse_date, usaspending_award_url, usaspending_recipient_search_url
+from .utils import (
+    clean_text,
+    first_present,
+    parse_amount,
+    parse_date,
+    usaspending_award_url,
+    usaspending_recipient_profile_url,
+)
 
 
 def canonical_contractor_name(name: object) -> str:
@@ -235,6 +242,7 @@ def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
         transactions.groupby("canonical_contractor", as_index=False)
         .agg(
             contractor_name=("recipient_name", "first"),
+            primary_uei=("recipient_uei", "first"),
             obligations=("federal_action_obligation", "sum"),
             unique_awards=("contract_award_unique_key", pd.Series.nunique),
             most_recent=("action_date", "max"),
@@ -244,6 +252,10 @@ def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     )
     grouped["Rank"] = grouped.index + 1
     grouped["Contractor Name"] = grouped["contractor_name"]
+    grouped["Recipient Profile Link"] = grouped.apply(
+        lambda row: usaspending_recipient_profile_url(str(row["primary_uei"] or ""), str(row["contractor_name"])),
+        axis=1,
+    )
     grouped["Obligations in Scope"] = grouped["obligations"]
     grouped["Market Share"] = grouped["obligations"].apply(lambda amount: amount / total_net if abs(total_net) >= 0.005 else None)
     grouped["Unique Awards"] = grouped["unique_awards"].astype(int)
@@ -264,7 +276,11 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
         return {"top_share": None, "positive_total": positive_total, "breakdown": [], "contractor_count": 0}
     grouped = (
         positive.groupby("canonical_contractor", as_index=False)
-        .agg(contractor=("recipient_name", "first"), amount=("federal_action_obligation", "sum"))
+        .agg(
+            contractor=("recipient_name", "first"),
+            primary_uei=("recipient_uei", "first"),
+            amount=("federal_action_obligation", "sum"),
+        )
         .sort_values("amount", ascending=False)
         .reset_index(drop=True)
     )
@@ -274,7 +290,15 @@ def market_concentration(transactions: pd.DataFrame, top_n: int = 5) -> dict:
         "top_share": top_sum / positive_total,
         "positive_total": positive_total,
         "breakdown": [
-            {"contractor": row["contractor"], "amount": float(row["amount"]), "share": float(row["amount"]) / positive_total}
+            {
+                "contractor": row["contractor"],
+                "amount": float(row["amount"]),
+                "share": float(row["amount"]) / positive_total,
+                "recipient_profile_link": usaspending_recipient_profile_url(
+                    str(row["primary_uei"] or ""),
+                    str(row["contractor"]),
+                ),
+            }
             for row in top.to_dict("records")
         ],
         "contractor_count": int(len(grouped)),
@@ -299,9 +323,12 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for award_key, group in transactions.groupby("contract_award_unique_key", dropna=False):
         latest = group.sort_values(["action_date", "row_order"], na_position="first").iloc[-1]
+        contractor_name = latest["recipient_name"]
+        contractor_uei = clean_text(latest["recipient_uei"])
         rows.append(
             {
-                "Contractor": latest["recipient_name"],
+                "Contractor": contractor_name,
+                "Recipient Profile Link": usaspending_recipient_profile_url(contractor_uei, contractor_name),
                 "Award ID": latest["award_id_piid"],
                 "Description": latest["transaction_description"],
                 "Obligations in Scope": float(group["federal_action_obligation"].sum()),
@@ -331,7 +358,9 @@ def contractor_detail(transactions: pd.DataFrame, contractor_name: str) -> dict:
         "obligations": contractor_total,
         "market_share": contractor_total / total_scope if abs(total_scope) >= 0.005 else None,
         "unique_awards": int(scoped["contract_award_unique_key"].nunique()),
-        "recipient_entities": [{"uei": uei, "recipient_link": usaspending_recipient_search_url(uei)} for uei, _count in uei_counts.most_common()],
+        "recipient_entities": [
+            {"uei": uei, "recipient_link": usaspending_recipient_profile_url(uei)} for uei, _count in uei_counts.most_common()
+        ],
         "top_awards": award_table(scoped).head(10),
         "recent_actions": scoped.sort_values(["action_date", "row_order"], ascending=[False, False]).head(10),
         "location_mix": scoped.groupby("performance_location", as_index=False)["federal_action_obligation"].sum().sort_values("federal_action_obligation", ascending=False),

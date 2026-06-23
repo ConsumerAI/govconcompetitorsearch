@@ -102,3 +102,10 @@ def usaspending_recipient_search_url(query: str) -> str:
         return ""
     return f"https://www.usaspending.gov/search/?hash=recipient&recipient_search_text={quote(text)}"
 
+
+def usaspending_recipient_profile_url(uei: str = "", name: str = "") -> str:
+    recipient_uei = clean_text(uei).upper()
+    if recipient_uei:
+        return f"https://www.usaspending.gov/recipient/{quote(recipient_uei, safe='')}/latest"
+    return usaspending_recipient_search_url(name)
+

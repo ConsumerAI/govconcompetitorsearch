@@ -67,23 +67,27 @@ def snapshots_differ(pending: FilterSnapshot, analyzed: FilterSnapshot | None) -
     )
 
 
-def active_filter_chips(snapshot: FilterSnapshot | None, component_label: str = "Agency Component") -> list[str]:
+def active_filter_chip_entries(snapshot: FilterSnapshot | None, component_label: str = "Agency Component") -> list[dict[str, str]]:
     if snapshot is None:
         return []
-    chips = []
+    chips: list[dict[str, str]] = []
     if snapshot.agency:
-        chips.append(f"Agency: {snapshot.agency}")
+        chips.append({"id": "agency", "label": f"Agency: {snapshot.agency}"})
     if snapshot.component != ALL_COMPONENTS:
-        chips.append(f"{component_label}: {snapshot.component}")
+        chips.append({"id": "component", "label": f"{component_label}: {snapshot.component}"})
     if snapshot.naics != ALL_NAICS:
-        chips.append(f"NAICS: {snapshot.naics}")
+        chips.append({"id": "naics", "label": f"NAICS: {snapshot.naics}"})
     if snapshot.set_aside != ALL_SET_ASIDES:
-        chips.append(f"Set-Aside: {snapshot.set_aside}")
+        chips.append({"id": "set_aside", "label": f"Set-Aside: {snapshot.set_aside}"})
     if snapshot.location != ALL_LOCATIONS:
-        chips.append(f"Performance Location: {snapshot.location}")
+        chips.append({"id": "location", "label": f"Performance Location: {snapshot.location}"})
     if snapshot.start_date and snapshot.end_date:
-        chips.append(f"Period: {snapshot.start_date} to {snapshot.end_date}")
+        chips.append({"id": "period", "label": f"Period: {snapshot.start_date} to {snapshot.end_date}"})
     return chips
+
+
+def active_filter_chips(snapshot: FilterSnapshot | None, component_label: str = "Agency Component") -> list[str]:
+    return [chip["label"] for chip in active_filter_chip_entries(snapshot, component_label)]
 
 
 def run_new_analysis(session: dict, pending: FilterSnapshot, results: dict) -> dict:
