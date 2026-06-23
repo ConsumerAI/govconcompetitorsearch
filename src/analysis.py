@@ -14,6 +14,7 @@ from .utils import (
     parse_date,
     usaspending_award_url,
     usaspending_recipient_profile_url,
+    warm_recipient_profile_cache,
 )
 
 
@@ -387,6 +388,10 @@ def contractor_detail(transactions: pd.DataFrame, contractor_name: str) -> dict:
 
 def analyze(transactions: pd.DataFrame, snapshot: FilterSnapshot, period: dict | None = None) -> dict:
     scoped = filter_transactions(transactions, snapshot)
+    if not scoped.empty:
+        warm_recipient_profile_cache(
+            list(scoped["recipient_uei"].tolist()) + list(scoped["recipient_name"].tolist())
+        )
     leaderboard = competitor_leaderboard(scoped)
     awards = award_table(scoped)
     concentration = market_concentration(scoped)

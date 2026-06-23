@@ -188,21 +188,31 @@ class FilterAndOutputTests(unittest.TestCase):
         self.assertEqual(acme["Obligations in Scope"], 900.0)
 
     def test_award_links_are_retained(self):
-        awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
+        from unittest import mock
+
+        with mock.patch("src.utils._recipient_id_for_keyword", return_value="recipient-id-C"):
+            awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         self.assertTrue(awards["USAspending Award Link"].str.startswith("https://www.usaspending.gov/award/").any())
         self.assertIn("Recipient Profile Link", awards.columns)
-        self.assertTrue(awards["Recipient Profile Link"].str.contains("recipient_search_text=UEI111").any())
+        self.assertTrue(awards["Recipient Profile Link"].str.contains("/recipient/recipient-id-C/latest").any())
 
     def test_recipient_links_use_search_endpoint(self):
+        from unittest import mock
+
         from src.utils import usaspending_recipient_profile_url
 
-        scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
-        leaderboard = competitor_leaderboard(scoped)
-        self.assertIn("Recipient Profile Link", leaderboard.columns)
-        self.assertTrue(leaderboard["Recipient Profile Link"].str.contains("hash=recipient").all())
-        url = usaspending_recipient_profile_url("UEI111", "Acme Global LLC")
-        self.assertIn("recipient_search_text=UEI111", url)
-        self.assertNotIn("/recipient/UEI111/latest", url)
+        with mock.patch("src.utils._recipient_id_for_keyword", return_value="e99f3811-0315-a3e0-91f1-b344d22529b8-C"):
+            scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
+            leaderboard = competitor_leaderboard(scoped)
+            self.assertIn("Recipient Profile Link", leaderboard.columns)
+            self.assertTrue(leaderboard["Recipient Profile Link"].str.contains("/recipient/").all())
+            self.assertTrue(leaderboard["Recipient Profile Link"].str.endswith("/latest").all())
+            url = usaspending_recipient_profile_url("UEI111", "Acme Global LLC")
+            self.assertEqual(
+                url,
+                "https://www.usaspending.gov/recipient/e99f3811-0315-a3e0-91f1-b344d22529b8-C/latest",
+            )
+            self.assertNotIn("recipient_search_text", url)
 
     def test_component_filter_matches_funding_subagency_when_awarding_differs(self):
         labor = normalize_transactions(
