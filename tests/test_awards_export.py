@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import io
 import unittest
 from unittest import mock
 
 import pandas as pd
+from openpyxl import load_workbook
 
 from src.analysis import contractors_combined_detail, filter_transactions_for_contractors
-from src.awards_export import awards_export_csv, awards_export_xlsx, build_awards_export_frame
+from src.awards_export import EXPORT_COLUMNS, awards_export_xlsx, build_awards_export_frame
 from src.state import FilterSnapshot
 from tests.test_analysis import sample_transactions
 
@@ -30,26 +32,35 @@ class ContractorSelectionTests(unittest.TestCase):
 
 
 class AwardsExportTests(unittest.TestCase):
-    def test_export_frame_includes_profile_and_award_urls(self):
+    def test_export_frame_omits_redundant_url_columns(self):
         from src.analysis import award_table, filter_transactions
 
         awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         export_df = build_awards_export_frame(awards)
-        self.assertIn("Recipient Profile URL", export_df.columns)
-        self.assertIn("Award URL", export_df.columns)
-        self.assertTrue(export_df["Award URL"].str.startswith("https://www.usaspending.gov/award/").any())
+        self.assertEqual(list(export_df.columns), EXPORT_COLUMNS)
+        self.assertNotIn("Recipient Profile URL", export_df.columns)
+        self.assertNotIn("Award URL", export_df.columns)
 
-    def test_export_files_are_generated(self):
+    def test_excel_hyperlinks_live_on_contractor_and_award_id_only(self):
         from src.analysis import award_table, filter_transactions
 
         awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
-        export_df = build_awards_export_frame(awards)
-        with mock.patch("src.awards_export.usaspending_recipient_profile_url", return_value="https://www.usaspending.gov/recipient/test/latest"):
-            export_df = build_awards_export_frame(awards)
-        csv_bytes = awards_export_csv(export_df)
-        xlsx_bytes = awards_export_xlsx(export_df)
-        self.assertTrue(csv_bytes.startswith(b"\xef\xbb\xbfContractor,"))
-        self.assertTrue(xlsx_bytes.startswith(b"PK"))
+        with mock.patch(
+            "src.awards_export.usaspending_recipient_profile_url",
+            return_value="https://www.usaspending.gov/recipient/test/latest",
+        ):
+            xlsx_bytes = awards_export_xlsx(awards)
+        workbook = load_workbook(io.BytesIO(xlsx_bytes))
+        worksheet = workbook.active
+        headers = [cell.value for cell in worksheet[1]]
+        self.assertNotIn("Recipient Profile URL", headers)
+        self.assertNotIn("Award URL", headers)
+        contractor_col = headers.index("Contractor") + 1
+        award_id_col = headers.index("Award ID") + 1
+        contractor_cell = worksheet.cell(row=2, column=contractor_col)
+        award_cell = worksheet.cell(row=2, column=award_id_col)
+        self.assertEqual(contractor_cell.hyperlink.target, "https://www.usaspending.gov/recipient/test/latest")
+        self.assertTrue(str(award_cell.hyperlink.target).startswith("https://www.usaspending.gov/award/"))
 
 
 if __name__ == "__main__":

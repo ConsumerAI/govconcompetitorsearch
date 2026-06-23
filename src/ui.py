@@ -17,7 +17,7 @@ from .analysis import (
     filter_transactions,
     filter_transactions_for_contractors,
 )
-from .awards_export import awards_export_csv, awards_export_xlsx, build_awards_export_frame
+from .awards_export import awards_export_xlsx
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
 from .global_filter_options import (
     global_location_option_values,
@@ -1036,29 +1036,19 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
     if awards.empty:
         st.info("No award rows found for this scope.")
         return
-    export_df = build_awards_export_frame(awards)
     file_suffix = "selected-contractors" if contractor_names else "all-contractors"
     visible = awards if contractor_names else awards.head(25)
     caption = f"Showing {len(visible):,} awards. Scroll the table for more." if len(visible) > 15 else ""
-    caption_col, csv_col, xlsx_col = st.columns([6.4, 0.7, 0.7], vertical_alignment="bottom")
+    caption_col, export_col = st.columns([6.2, 1.2], vertical_alignment="bottom")
     with caption_col:
         st.markdown('<div class="award-export-toolbar-slot"></div>', unsafe_allow_html=True)
         if caption:
             st.caption(caption)
-    with csv_col:
+    with export_col:
         st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
         st.download_button(
-            "CSV",
-            data=awards_export_csv(export_df),
-            file_name=f"top-relevant-awards-{file_suffix}.csv",
-            mime="text/csv",
-            key=f"awards-export-csv-{file_suffix}",
-        )
-    with xlsx_col:
-        st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
-        st.download_button(
-            "Excel",
-            data=awards_export_xlsx(export_df),
+            "Export to Excel",
+            data=awards_export_xlsx(awards),
             file_name=f"top-relevant-awards-{file_suffix}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"awards-export-xlsx-{file_suffix}",
