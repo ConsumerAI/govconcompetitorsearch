@@ -181,29 +181,66 @@ def styles() -> None:
         .metric-value, .market-intel-value { color: var(--text); font-size: 1.55rem; font-weight: 850; margin-top: .25rem; }
         .metric-sub, .market-intel-subtitle, .market-intel-helper { color: var(--muted); font-size: .84rem; margin-top: .22rem; }
         .section-title { color: var(--text); font-size: 1.05rem; font-weight: 850; margin: 1.25rem 0 .45rem; }
-        .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .25rem; }
-        .applied-filter-chip {
-            display: inline-block; color: #dbeafe; border: 1px solid rgba(56,189,248,.34);
-            background: rgba(14, 165, 233, .12); border-radius: 999px; padding: .25rem .62rem; margin: 0;
-            font-size: .82rem; font-weight: 650;
+        .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .45rem; }
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-col) {
+            flex-wrap: wrap !important;
+            gap: .55rem !important;
+            align-items: center !important;
         }
-        .applied-filter-chip-row {
-            display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-bottom: .35rem;
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-col) > div[data-testid="column"] {
+            width: auto !important;
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
         }
-        .applied-filter-chip-item {
-            display: inline-flex; align-items: center; gap: .35rem;
-            border: 1px solid rgba(56,189,248,.34); background: rgba(14, 165, 233, .12);
-            border-radius: 999px; padding: .18rem .18rem .18rem .62rem;
+        div[data-testid="column"]:has(.applied-filter-chip-col) {
+            position: relative;
+            display: inline-flex !important;
+            align-items: center;
+            width: auto !important;
+            flex: 0 0 auto !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-item) button {
-            border: 1px solid rgba(251,113,133,.55) !important;
+        .applied-filter-chip-pill {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(30, 41, 59, 0.96);
+            border-radius: 999px;
+            padding: .38rem 1.85rem .38rem .78rem;
+            color: #e5edf8;
+            font-size: .82rem;
+            font-weight: 650;
+            line-height: 1.2;
+            white-space: nowrap;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] {
+            position: absolute;
+            right: .34rem;
+            top: 50%;
+            transform: translateY(-50%);
+            margin: 0;
+            z-index: 2;
+        }
+        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] > button {
+            border: none !important;
+            background: transparent !important;
             color: #fb7185 !important;
-            background: rgba(251,113,133,.12) !important;
-            min-height: 28px !important;
-            min-width: 28px !important;
-            padding: 0 .35rem !important;
+            min-height: 20px !important;
+            min-width: 20px !important;
+            width: 20px !important;
+            height: 20px !important;
+            padding: 0 !important;
+            font-size: .88rem !important;
             font-weight: 800 !important;
+            line-height: 1 !important;
             box-shadow: none !important;
+        }
+        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] > button:hover {
+            background: rgba(251, 113, 133, 0.16) !important;
+            border-radius: 999px !important;
+            color: #fda4af !important;
         }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
@@ -845,19 +882,20 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
     if not chips:
         return
     st.markdown('<div class="applied-filter-heading">Applied filters</div>', unsafe_allow_html=True)
-    chip_cols = st.columns(len(chips))
+    chip_cols = st.columns(len(chips), gap="small")
     for idx, chip in enumerate(chips):
         with chip_cols[idx]:
-            label_col, remove_col = st.columns([10, 1], gap="small", vertical_alignment="center")
-            with label_col:
-                st.markdown(
-                    f'<span class="applied-filter-chip">{html.escape(chip["label"])}</span>',
-                    unsafe_allow_html=True,
-                )
-            with remove_col:
-                if st.button("✕", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
-                    _handle_chip_removal(chip["id"], analyzed)
-                    st.rerun()
+            st.markdown(
+                f"""
+                <div class="applied-filter-chip-col">
+                  <span class="applied-filter-chip-pill">{html.escape(chip["label"])}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("×", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
+                _handle_chip_removal(chip["id"], analyzed)
+                st.rerun()
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
