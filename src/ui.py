@@ -182,71 +182,42 @@ def styles() -> None:
         .metric-sub, .market-intel-subtitle, .market-intel-helper { color: var(--muted); font-size: .84rem; margin-top: .22rem; }
         .section-title { color: var(--text); font-size: 1.05rem; font-weight: 850; margin: 1.25rem 0 .45rem; }
         .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .45rem; }
-        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-marker) {
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-slot) {
             flex-wrap: wrap !important;
-            gap: .55rem !important;
-            align-items: stretch !important;
+            gap: .5rem !important;
+            align-items: center !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-marker) > div[data-testid="column"] {
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-slot) > div[data-testid="column"] {
             width: auto !important;
             flex: 0 0 auto !important;
             min-width: 0 !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) {
+        div[data-testid="column"]:has(.applied-filter-chip-slot) [data-testid="stButton"] > button {
             border-radius: 999px !important;
             border: 1px solid rgba(148, 163, 184, 0.28) !important;
             background: rgba(30, 41, 59, 0.96) !important;
-            padding: .18rem .2rem .18rem .72rem !important;
-            width: fit-content !important;
-            max-width: 100% !important;
+            color: #e5edf8 !important;
+            font-size: .82rem !important;
+            font-weight: 650 !important;
+            padding: .4rem .85rem !important;
             box-shadow: none !important;
+            min-height: unset !important;
+            white-space: nowrap !important;
+            width: auto !important;
         }
-        .applied-filter-chip-marker { display: none; }
-        .applied-filter-chip-label {
-            color: #e5edf8;
-            font-size: .82rem;
-            font-weight: 650;
-            white-space: nowrap;
-            line-height: 1.35;
+        div[data-testid="column"]:has(.applied-filter-chip-slot) [data-testid="stButton"] > button:hover {
+            border-color: rgba(251, 113, 133, 0.45) !important;
+            background: rgba(30, 41, 59, 1) !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stMarkdown"] p {
-            margin: 0;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stHorizontalBlock"] {
-            gap: .15rem !important;
-            align-items: center !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] {
-            margin: 0;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] > button {
-            border: none !important;
-            background: transparent !important;
-            color: #fb7185 !important;
-            min-height: 24px !important;
-            min-width: 24px !important;
-            width: 24px !important;
-            height: 24px !important;
-            padding: 0 !important;
-            font-size: .95rem !important;
-            font-weight: 800 !important;
-            line-height: 1 !important;
-            box-shadow: none !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] > button:hover {
-            background: rgba(251, 113, 133, 0.16) !important;
-            border-radius: 999px !important;
-            color: #fda4af !important;
-        }
-        .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
-        .award-drilldown-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-        .award-drilldown-table th {
+        .applied-filter-chip-slot { display: none; }
+        .award-drilldown-table-wrap, .competitor-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
+        .award-drilldown-table, .competitor-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+        .award-drilldown-table th, .competitor-table th {
             text-align: left; color: #dbeafe; background: rgba(15,23,42,.96); padding: .65rem .7rem; border-bottom: 1px solid var(--border);
         }
-        .award-drilldown-table td { color: #e5edf8; padding: .58rem .7rem; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
-        .award-drilldown-table tr:nth-child(even) td { background: rgba(15,23,42,.42); }
-        .market-concentration-legend-name a { color: #67e8f9; text-decoration: none; font-weight: 750; }
-        .award-drilldown-table a { color: #67e8f9; text-decoration: none; font-weight: 750; }
+        .award-drilldown-table td, .competitor-table td { color: #e5edf8; padding: .58rem .7rem; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
+        .award-drilldown-table tr:nth-child(even) td, .competitor-table tr:nth-child(even) td { background: rgba(15,23,42,.42); }
+        .market-concentration-legend-name a, .award-drilldown-table a, .competitor-table a { color: #67e8f9; text-decoration: none; font-weight: 750; }
         .market-concentration-legend-row {
             display: flex; justify-content: space-between; gap: .8rem; padding: .55rem .65rem;
             border-left: 4px solid #38bdf8; border-radius: 8px; margin-top: .45rem; background: rgba(56,189,248,.10);
@@ -881,18 +852,23 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
     chip_cols = st.columns(len(chips), gap="small")
     for idx, chip in enumerate(chips):
         with chip_cols[idx]:
-            with st.container(border=True):
-                st.markdown('<span class="applied-filter-chip-marker"></span>', unsafe_allow_html=True)
-                label_col, remove_col = st.columns([12, 1], gap="small", vertical_alignment="center")
-                with label_col:
-                    st.markdown(
-                        f'<span class="applied-filter-chip-label">{html.escape(chip["label"])}</span>',
-                        unsafe_allow_html=True,
-                    )
-                with remove_col:
-                    if st.button("×", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
-                        _handle_chip_removal(chip["id"], analyzed)
-                        st.rerun()
+            st.markdown('<span class="applied-filter-chip-slot"></span>', unsafe_allow_html=True)
+            if st.button(
+                f"{chip['label']}  ×",
+                key=f"remove_filter_{chip['id']}",
+                help=f"Remove {chip['label']}",
+                type="secondary",
+            ):
+                _handle_chip_removal(chip["id"], analyzed)
+                st.rerun()
+
+
+def _contractor_link_markup(name: str, profile_link: str = "") -> str:
+    contractor = html.escape(name)
+    link = profile_link or usaspending_recipient_profile_url("", name)
+    if not link:
+        return contractor
+    return f'<a href="{html.escape(link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
@@ -900,40 +876,35 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
         return
-    display = leaderboard.copy()
-    if "Recipient Profile Link" not in display.columns:
-        display["Recipient Profile Link"] = display["Contractor Name"].map(
-            lambda name: usaspending_recipient_profile_url("", str(name))
+    rows = []
+    for row in leaderboard.to_dict("records"):
+        name = str(row.get("Contractor Name") or "")
+        profile_link = str(row.get("Recipient Profile Link") or "")
+        obligations = format_full_money(row.get("Obligations in Scope"))
+        share = format_percent(row.get("Market Share"))
+        unique_awards = int(row.get("Unique Awards") or 0)
+        recent = row.get("Most Recent Action Date")
+        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
+            f"<td>{_contractor_link_markup(name, profile_link)}</td>"
+            f"<td>{html.escape(obligations)}</td>"
+            f"<td>{html.escape(share)}</td>"
+            f"<td>{unique_awards:,}</td>"
+            f"<td>{html.escape(recent_text)}</td>"
+            "</tr>"
         )
-    display["Obligations in Scope"] = display["Obligations in Scope"].apply(format_full_money)
-    display["Market Share"] = display["Market Share"].apply(format_percent)
-    display["Most Recent Action Date"] = display["Most Recent Action Date"].apply(lambda value: value.isoformat() if pd.notna(value) and value else "")
-    st.dataframe(
-        display[
-            [
-                "Rank",
-                "Contractor Name",
-                "Recipient Profile Link",
-                "Obligations in Scope",
-                "Market Share",
-                "Unique Awards",
-                "Most Recent Action Date",
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Recipient Profile Link": st.column_config.LinkColumn("Contractor Name", display_text="Contractor Name"),
-            "Contractor Name": None,
-        },
-        column_order=[
-            "Rank",
-            "Recipient Profile Link",
-            "Obligations in Scope",
-            "Market Share",
-            "Unique Awards",
-            "Most Recent Action Date",
-        ],
+    st.markdown(
+        """
+        <div class="competitor-table-wrap">
+          <table class="competitor-table">
+            <thead><tr><th>Rank</th><th>Contractor Name</th><th>Obligations in Scope</th><th>Market Share</th><th>Unique Awards</th><th>Most Recent Action Date</th></tr></thead>
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -983,14 +954,10 @@ def render_concentration(concentration: dict) -> None:
         st.info("No positive obligation transactions in this scope.")
         return
     for row in concentration["breakdown"]:
-        contractor = html.escape(str(row["contractor"]))
-        profile_link = str(row.get("recipient_profile_link") or "")
-        if profile_link:
-            contractor_markup = (
-                f'<a href="{html.escape(profile_link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
-            )
-        else:
-            contractor_markup = contractor
+        contractor_markup = _contractor_link_markup(
+            str(row["contractor"]),
+            usaspending_recipient_profile_url("", str(row["contractor"])),
+        )
         st.markdown(
             f"""
             <div class="market-concentration-legend-row">
@@ -1021,12 +988,9 @@ def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None
         award_link = row.get("USAspending Award Link") or ""
         award = html.escape(str(row.get("Award ID") or "Unavailable"))
         award_markup = f'<a href="{html.escape(award_link)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
-        contractor = html.escape(str(row.get("Contractor") or ""))
-        profile_link = str(row.get("Recipient Profile Link") or "")
-        contractor_markup = (
-            f'<a href="{html.escape(profile_link)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
-            if profile_link
-            else contractor
+        contractor_markup = _contractor_link_markup(
+            str(row.get("Contractor") or ""),
+            usaspending_recipient_profile_url("", str(row.get("Contractor") or "")),
         )
         rows.append(
             "<tr>"

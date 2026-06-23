@@ -104,8 +104,8 @@ def usaspending_recipient_search_url(query: str) -> str:
 
 
 def usaspending_recipient_profile_url(uei: str = "", name: str = "") -> str:
-    recipient_uei = clean_text(uei).upper()
-    if recipient_uei:
-        return f"https://www.usaspending.gov/recipient/{quote(recipient_uei, safe='')}/latest"
-    return usaspending_recipient_search_url(name)
+    # USAspending direct /recipient/{uei}/latest links require internal recipient hashes.
+    # Recipient search is reliable with either UEI or company name.
+    query = clean_text(uei) or clean_text(name)
+    return usaspending_recipient_search_url(query)
 

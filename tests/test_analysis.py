@@ -191,6 +191,17 @@ class FilterAndOutputTests(unittest.TestCase):
         awards = award_table(filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State")))
         self.assertTrue(awards["USAspending Award Link"].str.startswith("https://www.usaspending.gov/award/").any())
 
+    def test_recipient_links_use_search_endpoint(self):
+        from src.utils import usaspending_recipient_profile_url
+
+        scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
+        leaderboard = competitor_leaderboard(scoped)
+        self.assertIn("Recipient Profile Link", leaderboard.columns)
+        self.assertTrue(leaderboard["Recipient Profile Link"].str.contains("hash=recipient").all())
+        url = usaspending_recipient_profile_url("UEI111", "Acme Global LLC")
+        self.assertIn("recipient_search_text=UEI111", url)
+        self.assertNotIn("/recipient/UEI111/latest", url)
+
     def test_component_filter_matches_funding_subagency_when_awarding_differs(self):
         labor = normalize_transactions(
             [
