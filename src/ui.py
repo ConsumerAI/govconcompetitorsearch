@@ -10,7 +10,14 @@ import pandas as pd
 import streamlit as st
 
 from .agency_components import get_agency_component_config
-from .analysis import analyze, award_table, canonical_contractor_name, contractor_detail, filter_transactions
+from .analysis import (
+    analyze,
+    award_table,
+    contractors_combined_detail,
+    filter_transactions,
+    filter_transactions_for_contractors,
+)
+from .awards_export import awards_export_csv, awards_export_xlsx, build_awards_export_frame
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
 from .global_filter_options import (
     global_location_option_values,
@@ -35,7 +42,7 @@ from .state import (
     snapshots_differ,
 )
 from .usaspending import fetch_transactions_for_snapshot
-from .utils import decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url, warm_recipient_profile_cache
+from .utils import clean_text, decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url, warm_recipient_profile_cache
 
 UNAVAILABLE = "Unable to load options"
 _RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
@@ -44,7 +51,7 @@ COMPONENT_WIDGET_KEY = "filter_component"
 NAICS_WIDGET_KEY = "filter_naics"
 SET_ASIDE_WIDGET_KEY = "filter_set_aside"
 LOCATION_WIDGET_KEY = "filter_location"
-CONTRACTOR_WIDGET_KEY = "selected_contractor"
+CONTRACTOR_WIDGET_KEY = "selected_contractors"
 INDEX_DEPLOYMENT_ERROR = (
     "Competitor filters are temporarily unavailable because the option index was not included in this deployment."
 )
@@ -63,7 +70,10 @@ def init_streamlit_state() -> None:
     st.session_state.setdefault("component_request_generation", 0)
     st.session_state.setdefault("naics_request_generation", 0)
     st.session_state.setdefault("option_index_refresh_needed", False)
-    st.session_state.setdefault("selected_contractor", "")
+    st.session_state.setdefault("selected_contractors", [])
+    legacy_contractor = st.session_state.pop("selected_contractor", None)
+    if legacy_contractor and not st.session_state.get("selected_contractors"):
+        st.session_state["selected_contractors"] = [legacy_contractor]
 
 
 def styles() -> None:
@@ -212,6 +222,7 @@ def styles() -> None:
         .applied-filter-chip-slot { display: none; }
         .competitor-table-wrap { overflow-x: auto; overflow-y: auto; max-height: 28rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
+        .award-drilldown-table-wrap.is-scrollable { overflow-y: auto; max-height: 28rem; }
         .award-drilldown-table, .competitor-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
         .award-drilldown-table th, .competitor-table th {
             text-align: left; color: #dbeafe; background: rgba(15,23,42,.96); padding: .65rem .7rem; border-bottom: 1px solid var(--border);
@@ -836,7 +847,7 @@ def _apply_analysis_snapshot(pending: FilterSnapshot, *, download: bool) -> None
 
 def _handle_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> None:
     pending = _snapshot_after_chip_removal(chip_id, analyzed)
-    st.session_state.selected_contractor = ""
+    st.session_state.selected_contractors = []
     if pending is None:
         st.session_state.analysis_results = None
         st.session_state.analyzed_snapshot = None
@@ -911,33 +922,45 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     )
 
 
-def render_contractor_selector(options: list[str]) -> str:
+def _contractor_selection_label(contractor_names: list[str]) -> str:
+    if not contractor_names:
+        return ""
+    if len(contractor_names) == 1:
+        return contractor_names[0]
+    if len(contractor_names) == 2:
+        return f"{contractor_names[0]} and {contractor_names[1]}"
+    return f"{contractor_names[0]}, {contractor_names[1]}, and {len(contractor_names) - 2} more"
+
+
+def render_contractor_selector(options: list[str]) -> list[str]:
     st.markdown('<div class="section-title">Contractor Detail</div>', unsafe_allow_html=True)
-    choices = [""] + options
-    current = st.session_state.get(CONTRACTOR_WIDGET_KEY, "")
-    if current and current not in choices:
-        st.session_state[CONTRACTOR_WIDGET_KEY] = ""
-    return st.selectbox(
-        "Choose a contractor to drill down",
-        choices,
-        format_func=lambda value: value or "Start typing contractor name...",
-        placeholder="Start typing contractor name...",
-        help=_SEARCH_HELP,
+    current = st.session_state.get(CONTRACTOR_WIDGET_KEY, [])
+    if not isinstance(current, list):
+        current = [current] if current else []
+    current = [name for name in current if name in options]
+    st.session_state[CONTRACTOR_WIDGET_KEY] = current
+    return st.multiselect(
+        "Choose contractors to drill down",
+        options,
+        help="Select one or more contractors to combine their obligations, awards, and exports.",
         key=CONTRACTOR_WIDGET_KEY,
+        placeholder="Start typing contractor names...",
         label_visibility="collapsed",
     )
 
 
-def render_contractor_kpis(transactions: pd.DataFrame, contractor_name: str) -> None:
-    detail = contractor_detail(transactions, contractor_name)
+def render_contractor_kpis(transactions: pd.DataFrame, contractor_names: list[str]) -> None:
+    detail = contractors_combined_detail(transactions, contractor_names)
     if not detail:
         return
+    count = len(contractor_names)
+    scope_label = f"{count} selected contractors" if count > 1 else "this contractor"
     st.markdown('<div class="metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">', unsafe_allow_html=True)
     cols = st.columns(2)
     with cols[0]:
-        metric_card("Net Obligations", format_money(detail["obligations"]), "Transaction obligations for this contractor", "#38bdf8")
+        metric_card("Net Obligations", format_money(detail["obligations"]), f"Combined transaction obligations for {scope_label}", "#38bdf8")
     with cols[1]:
-        metric_card("Unique Awards", f"{detail['unique_awards']:,}", "Awards for this contractor in scope", "#a78bfa")
+        metric_card("Unique Awards", f"{detail['unique_awards']:,}", f"Combined awards for {scope_label}", "#a78bfa")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -972,20 +995,42 @@ def render_concentration(concentration: dict) -> None:
         )
 
 
-def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None:
+def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None = None) -> None:
+    contractor_names = contractor_names or []
     title = "Top Relevant Awards"
-    if contractor_name:
-        target = canonical_contractor_name(contractor_name)
-        scoped = transactions[transactions["canonical_contractor"] == target]
+    if contractor_names:
+        scoped = filter_transactions_for_contractors(transactions, contractor_names)
         awards = award_table(scoped)
-        title = f"Top Relevant Awards — {contractor_name}"
+        title = f"Top Relevant Awards — {_contractor_selection_label(contractor_names)}"
     else:
         awards = award_table(transactions)
-    st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
+    title_col, export_col = st.columns([4, 1])
+    with title_col:
+        st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
     if awards.empty:
         st.info("No award rows found for this scope.")
         return
-    visible = awards.head(25).copy()
+    export_df = build_awards_export_frame(awards)
+    file_suffix = "selected-contractors" if contractor_names else "all-contractors"
+    with export_col:
+        st.download_button(
+            "Export CSV",
+            data=awards_export_csv(export_df),
+            file_name=f"top-relevant-awards-{file_suffix}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.download_button(
+            "Export Excel",
+            data=awards_export_xlsx(export_df),
+            file_name=f"top-relevant-awards-{file_suffix}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    visible = awards if contractor_names else awards.head(25)
+    if len(visible) > 15:
+        st.caption(f"Showing {len(visible):,} awards. Scroll the table for more.")
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
     rows = []
     for row in visible.to_dict("records"):
         award_link = row.get("USAspending Award Link") or ""
@@ -1007,8 +1052,8 @@ def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None
             "</tr>"
         )
     st.markdown(
-        """
-        <div class="award-drilldown-table-wrap">
+        f"""
+        <div class="{scroll_class}">
           <table class="award-drilldown-table">
             <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Obligations in Scope</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
             <tbody>
@@ -1019,30 +1064,53 @@ def render_awards(transactions: pd.DataFrame, contractor_name: str = "") -> None
     )
 
 
-def render_detail(results: dict, contractor_name: str) -> None:
-    if not contractor_name:
+def render_detail(results: dict, contractor_names: list[str]) -> None:
+    if not contractor_names:
         return
-    detail = contractor_detail(results["transactions"], contractor_name)
-    if not detail:
+    scoped = filter_transactions_for_contractors(results["transactions"], contractor_names)
+    if scoped.empty:
         return
-    with st.expander(f"More detail — {detail['contractor_name']}", expanded=False):
+    detail = contractors_combined_detail(results["transactions"], contractor_names)
+    label = _contractor_selection_label(contractor_names)
+    with st.expander(f"More detail — {label}", expanded=False):
         st.write(
             f"{format_full_money(detail['obligations'])} in scope, "
             f"{format_percent(detail['market_share'])} market share, "
-            f"{detail['unique_awards']} unique awards."
+            f"{detail['unique_awards']} unique awards across {len(contractor_names)} selected contractor group(s)."
         )
-        if detail["recipient_entities"]:
+        uei_counts: dict[str, int] = {}
+        for uei in scoped["recipient_uei"].tolist():
+            cleaned = clean_text(uei)
+            if cleaned:
+                uei_counts[cleaned] = uei_counts.get(cleaned, 0) + 1
+        if uei_counts:
+            recipient_entities = [
+                {"uei": uei, "recipient_link": usaspending_recipient_profile_url(uei)}
+                for uei, _count in sorted(uei_counts.items(), key=lambda item: (-item[1], item[0]))
+            ]
             st.markdown("Recipient entities")
             st.dataframe(
-                pd.DataFrame(detail["recipient_entities"]),
+                pd.DataFrame(recipient_entities),
                 use_container_width=True,
                 hide_index=True,
                 column_config={"recipient_link": st.column_config.LinkColumn("USAspending recipient profile")},
             )
         st.markdown("Location mix")
-        st.dataframe(detail["location_mix"], use_container_width=True, hide_index=True)
+        st.dataframe(
+            scoped.groupby("performance_location", as_index=False)["federal_action_obligation"]
+            .sum()
+            .sort_values("federal_action_obligation", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+        )
         st.markdown("NAICS mix")
-        st.dataframe(detail["naics_mix"], use_container_width=True, hide_index=True)
+        st.dataframe(
+            scoped.groupby(["naics_code", "naics_description"], as_index=False)["federal_action_obligation"]
+            .sum()
+            .sort_values("federal_action_obligation", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_diagnostics(diagnostics: dict) -> None:
@@ -1091,7 +1159,7 @@ def main() -> None:
                     )
                     st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
                     st.session_state.analyzed_snapshot = analyzed_snapshot
-                    st.session_state.selected_contractor = ""
+                    st.session_state.selected_contractors = []
                     if not transactions.empty:
                         st.session_state.base_transactions = transactions
             progress.empty()
@@ -1114,8 +1182,8 @@ def main() -> None:
     st.markdown('<div class="section-title">Market Concentration</div>', unsafe_allow_html=True)
     render_concentration(results["concentration"])
     contractor_options = results["leaderboard"]["Contractor Name"].tolist() if not results["leaderboard"].empty else []
-    selected_contractor = render_contractor_selector(contractor_options)
-    if selected_contractor:
-        render_contractor_kpis(results["transactions"], selected_contractor)
-    render_awards(results["transactions"], selected_contractor)
-    render_detail(results, selected_contractor)
+    selected_contractors = render_contractor_selector(contractor_options)
+    if selected_contractors:
+        render_contractor_kpis(results["transactions"], selected_contractors)
+    render_awards(results["transactions"], selected_contractors)
+    render_detail(results, selected_contractors)

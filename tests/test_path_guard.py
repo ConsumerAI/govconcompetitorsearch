@@ -64,6 +64,7 @@ class PathGuardTests(unittest.TestCase):
             "sqlite3",
             "tempfile",
             "typing",
+            "openpyxl",
         }
         for path in PRODUCTION_FILES:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

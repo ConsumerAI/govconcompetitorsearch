@@ -355,6 +355,27 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).sort_values("Obligations in Scope", ascending=False).reset_index(drop=True)
 
 
+def filter_transactions_for_contractors(transactions: pd.DataFrame, contractor_names: list[str]) -> pd.DataFrame:
+    if transactions is None or transactions.empty or not contractor_names:
+        return pd.DataFrame() if transactions is None else transactions.iloc[0:0].copy()
+    targets = {canonical_contractor_name(name) for name in contractor_names}
+    return transactions[transactions["canonical_contractor"].isin(targets)].copy()
+
+
+def contractors_combined_detail(transactions: pd.DataFrame, contractor_names: list[str]) -> dict:
+    scoped = filter_transactions_for_contractors(transactions, contractor_names)
+    if scoped.empty:
+        return {}
+    total_scope = float(transactions["federal_action_obligation"].sum())
+    contractor_total = float(scoped["federal_action_obligation"].sum())
+    return {
+        "contractor_names": list(contractor_names),
+        "obligations": contractor_total,
+        "market_share": contractor_total / total_scope if abs(total_scope) >= 0.005 else None,
+        "unique_awards": int(scoped["contract_award_unique_key"].nunique()),
+    }
+
+
 def contractor_detail(transactions: pd.DataFrame, contractor_name: str) -> dict:
     if transactions is None or transactions.empty:
         return {}
