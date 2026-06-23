@@ -35,7 +35,7 @@ from .state import (
     snapshots_differ,
 )
 from .usaspending import fetch_transactions_for_snapshot
-from .utils import decode_option, format_full_money, format_money, format_option, format_percent
+from .utils import decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url
 
 UNAVAILABLE = "Unable to load options"
 _RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
@@ -182,62 +182,58 @@ def styles() -> None:
         .metric-sub, .market-intel-subtitle, .market-intel-helper { color: var(--muted); font-size: .84rem; margin-top: .22rem; }
         .section-title { color: var(--text); font-size: 1.05rem; font-weight: 850; margin: 1.25rem 0 .45rem; }
         .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .45rem; }
-        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-col) {
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-marker) {
             flex-wrap: wrap !important;
             gap: .55rem !important;
-            align-items: center !important;
+            align-items: stretch !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-col) > div[data-testid="column"] {
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-marker) > div[data-testid="column"] {
             width: auto !important;
             flex: 0 0 auto !important;
             min-width: 0 !important;
         }
-        div[data-testid="column"]:has(.applied-filter-chip-col) {
-            position: relative;
-            display: inline-flex !important;
-            align-items: center;
-            width: auto !important;
-            flex: 0 0 auto !important;
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) {
+            border-radius: 999px !important;
+            border: 1px solid rgba(148, 163, 184, 0.28) !important;
+            background: rgba(30, 41, 59, 0.96) !important;
+            padding: .18rem .2rem .18rem .72rem !important;
+            width: fit-content !important;
+            max-width: 100% !important;
+            box-shadow: none !important;
         }
-        .applied-filter-chip-pill {
-            display: inline-flex;
-            align-items: center;
-            border: 1px solid rgba(148, 163, 184, 0.28);
-            background: rgba(30, 41, 59, 0.96);
-            border-radius: 999px;
-            padding: .38rem 1.85rem .38rem .78rem;
+        .applied-filter-chip-marker { display: none; }
+        .applied-filter-chip-label {
             color: #e5edf8;
             font-size: .82rem;
             font-weight: 650;
-            line-height: 1.2;
             white-space: nowrap;
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            line-height: 1.35;
         }
-        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] {
-            position: absolute;
-            right: .34rem;
-            top: 50%;
-            transform: translateY(-50%);
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stMarkdown"] p {
             margin: 0;
-            z-index: 2;
         }
-        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] > button {
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stHorizontalBlock"] {
+            gap: .15rem !important;
+            align-items: center !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] {
+            margin: 0;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] > button {
             border: none !important;
             background: transparent !important;
             color: #fb7185 !important;
-            min-height: 20px !important;
-            min-width: 20px !important;
-            width: 20px !important;
-            height: 20px !important;
+            min-height: 24px !important;
+            min-width: 24px !important;
+            width: 24px !important;
+            height: 24px !important;
             padding: 0 !important;
-            font-size: .88rem !important;
+            font-size: .95rem !important;
             font-weight: 800 !important;
             line-height: 1 !important;
             box-shadow: none !important;
         }
-        div[data-testid="column"]:has(.applied-filter-chip-col) [data-testid="stButton"] > button:hover {
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.applied-filter-chip-marker) [data-testid="stButton"] > button:hover {
             background: rgba(251, 113, 133, 0.16) !important;
             border-radius: 999px !important;
             color: #fda4af !important;
@@ -885,17 +881,18 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
     chip_cols = st.columns(len(chips), gap="small")
     for idx, chip in enumerate(chips):
         with chip_cols[idx]:
-            st.markdown(
-                f"""
-                <div class="applied-filter-chip-col">
-                  <span class="applied-filter-chip-pill">{html.escape(chip["label"])}</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("×", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
-                _handle_chip_removal(chip["id"], analyzed)
-                st.rerun()
+            with st.container(border=True):
+                st.markdown('<span class="applied-filter-chip-marker"></span>', unsafe_allow_html=True)
+                label_col, remove_col = st.columns([12, 1], gap="small", vertical_alignment="center")
+                with label_col:
+                    st.markdown(
+                        f'<span class="applied-filter-chip-label">{html.escape(chip["label"])}</span>',
+                        unsafe_allow_html=True,
+                    )
+                with remove_col:
+                    if st.button("×", key=f"remove_filter_{chip['id']}", help=f"Remove {chip['label']}"):
+                        _handle_chip_removal(chip["id"], analyzed)
+                        st.rerun()
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
@@ -904,6 +901,10 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
         st.info("No contractors found for this scope.")
         return
     display = leaderboard.copy()
+    if "Recipient Profile Link" not in display.columns:
+        display["Recipient Profile Link"] = display["Contractor Name"].map(
+            lambda name: usaspending_recipient_profile_url("", str(name))
+        )
     display["Obligations in Scope"] = display["Obligations in Scope"].apply(format_full_money)
     display["Market Share"] = display["Market Share"].apply(format_percent)
     display["Most Recent Action Date"] = display["Most Recent Action Date"].apply(lambda value: value.isoformat() if pd.notna(value) and value else "")

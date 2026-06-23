@@ -234,7 +234,15 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
 
 
 def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
-    columns = ["Rank", "Contractor Name", "Obligations in Scope", "Market Share", "Unique Awards", "Most Recent Action Date"]
+    columns = [
+        "Rank",
+        "Contractor Name",
+        "Recipient Profile Link",
+        "Obligations in Scope",
+        "Market Share",
+        "Unique Awards",
+        "Most Recent Action Date",
+    ]
     if transactions is None or transactions.empty:
         return pd.DataFrame(columns=columns)
     total_net = float(pd.to_numeric(transactions["federal_action_obligation"], errors="coerce").fillna(0).sum())
