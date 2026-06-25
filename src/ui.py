@@ -816,27 +816,15 @@ def render_scope_line(results: dict) -> None:
         st.caption(f"Competitor activity from {_date_label(start_date, long=True)} through {_date_label(end_date, long=True)}")
 
 
-def _requires_download(previous: FilterSnapshot, pending: FilterSnapshot) -> bool:
-    return (previous.agency, previous.start_date, previous.end_date) != (
-        pending.agency,
-        pending.start_date,
-        pending.end_date,
-    )
-
-
-def _snapshot_after_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> FilterSnapshot | None:
+def _chip_removal_target(chip_id: str, analyzed: FilterSnapshot) -> tuple[FilterSnapshot | None, dict[str, object]]:
     if chip_id == "agency":
-        st.session_state.pending_snapshot = FilterSnapshot()
-        _defer_widget_updates(
-            **{
-                AGENCY_WIDGET_KEY: "",
-                COMPONENT_WIDGET_KEY: ALL_COMPONENTS,
-                NAICS_WIDGET_KEY: ALL_NAICS,
-                SET_ASIDE_WIDGET_KEY: ALL_SET_ASIDES,
-                LOCATION_WIDGET_KEY: ALL_LOCATIONS,
-            }
-        )
-        return None
+        return None, {
+            AGENCY_WIDGET_KEY: "",
+            COMPONENT_WIDGET_KEY: ALL_COMPONENTS,
+            NAICS_WIDGET_KEY: ALL_NAICS,
+            SET_ASIDE_WIDGET_KEY: ALL_SET_ASIDES,
+            LOCATION_WIDGET_KEY: ALL_LOCATIONS,
+        }
     pending = FilterSnapshot(
         agency=analyzed.agency,
         component=ALL_COMPONENTS if chip_id == "component" else analyzed.component,
@@ -858,20 +846,22 @@ def _snapshot_after_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> Filt
     elif chip_id == "period":
         widget_updates["date_from"] = _parse_snapshot_date(pending.start_date)
         widget_updates["date_through"] = _parse_snapshot_date(pending.end_date)
-    if widget_updates:
-        _defer_widget_updates(**widget_updates)
-    st.session_state.pending_snapshot = pending
-    return pending
+    return pending, widget_updates
 
 
-def _apply_analysis_snapshot(pending: FilterSnapshot, *, download: bool) -> None:
+def _apply_analysis_snapshot(
+    pending: FilterSnapshot,
+    *,
+    download: bool,
+    progress_callback=None,
+) -> bool:
     diagnostic: dict = {}
     if download or st.session_state.base_transactions.empty:
-        transactions, diagnostic = fetch_transactions_for_snapshot(pending)
+        transactions, diagnostic = fetch_transactions_for_snapshot(pending, progress_callback=progress_callback)
         st.session_state.last_data_diagnostics = diagnostic
         if diagnostic.get("error"):
             st.session_state.last_data_error = diagnostic["error"]
-            return
+            return False
         st.session_state.last_data_error = ""
         st.session_state.base_transactions = transactions
     else:
@@ -893,17 +883,27 @@ def _apply_analysis_snapshot(pending: FilterSnapshot, *, download: bool) -> None
     )
     st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
     st.session_state.analyzed_snapshot = analyzed_snapshot
+    return True
 
 
-def _handle_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> None:
-    pending = _snapshot_after_chip_removal(chip_id, analyzed)
+def _handle_chip_removal(chip_id: str, analyzed: FilterSnapshot, *, progress_callback=None) -> bool:
+    pending, widget_updates = _chip_removal_target(chip_id, analyzed)
     st.session_state.selected_contractors = []
     if pending is None:
+        st.session_state.pending_snapshot = FilterSnapshot()
         st.session_state.analysis_results = None
         st.session_state.analyzed_snapshot = None
         st.session_state.base_transactions = pd.DataFrame()
-        return
-    _apply_analysis_snapshot(pending, download=_requires_download(analyzed, pending))
+        st.session_state.last_data_error = ""
+        if widget_updates:
+            _defer_widget_updates(**widget_updates)
+        return True
+    if not _apply_analysis_snapshot(pending, download=True, progress_callback=progress_callback):
+        return False
+    st.session_state.pending_snapshot = pending
+    if widget_updates:
+        _defer_widget_updates(**widget_updates)
+    return True
 
 
 def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> None:
@@ -921,8 +921,14 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
                 help=f"Remove {chip['label']}",
                 type="secondary",
             ):
-                _handle_chip_removal(chip["id"], analyzed)
-                st.rerun()
+                with st.spinner("Re-running analysis with updated filters..."):
+                    progress = st.empty()
+                    if _handle_chip_removal(chip["id"], analyzed, progress_callback=progress.info):
+                        progress.empty()
+                        st.rerun()
+                    else:
+                        progress.empty()
+                        st.error("Unable to load the complete selected date range. No new analysis was applied.")
 
 
 def _contractor_link_markup(name: str, *, uei: str = "") -> str:
