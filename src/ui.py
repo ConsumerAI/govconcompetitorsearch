@@ -869,52 +869,18 @@ def _contractor_link_markup(name: str, *, uei: str = "") -> str:
     return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
 
 
-def _dataframe_height(row_count: int) -> int:
-    return min(28 * 16, max(220, 38 + row_count * 35))
+def _sort_table(
+    frame: pd.DataFrame,
+    sort_by: str,
+    *,
+    ascending: bool,
+) -> pd.DataFrame:
+    if frame.empty or sort_by not in frame.columns:
+        return frame
+    return frame.sort_values(sort_by, ascending=ascending, na_position="last").reset_index(drop=True)
 
 
-MONEY_TABLE_FORMAT = "$%,.2f"
-
-
-def _profile_link_column(display_text: str = "Contractor Name", *, label: str | None = None) -> st.column_config.LinkColumn:
-    return st.column_config.LinkColumn(
-        label or display_text,
-        display_text=display_text,
-    )
-
-
-def _award_link_column(display_text: str = "Award ID", *, label: str | None = None) -> st.column_config.LinkColumn:
-    return st.column_config.LinkColumn(
-        label or display_text,
-        display_text=display_text,
-    )
-
-
-def _leaderboard_column_config(*, money_label: str, share_label: str, awards_label: str, recent_label: str) -> dict:
-    return {
-        "Rank": st.column_config.NumberColumn("Rank", format="%d"),
-        "Profile Link": _profile_link_column(),
-        money_label: st.column_config.NumberColumn(money_label, format=MONEY_TABLE_FORMAT),
-        share_label: st.column_config.NumberColumn(share_label, format="%.1f%%"),
-        awards_label: st.column_config.NumberColumn(awards_label, format="%d"),
-        recent_label: st.column_config.DateColumn(recent_label, format="YYYY-MM-DD"),
-    }
-
-
-def _prepare_leaderboard_display(leaderboard: pd.DataFrame) -> pd.DataFrame:
-    display = leaderboard.copy()
-    if "Market Share" in display.columns:
-        display["Market Share"] = pd.to_numeric(display["Market Share"], errors="coerce") * 100
-    if "Share of Wins" in display.columns:
-        display["Share of Wins"] = pd.to_numeric(display["Share of Wins"], errors="coerce") * 100
-    display["Profile Link"] = display.apply(
-        lambda row: usaspending_recipient_profile_url(str(row.get("Primary UEI") or ""), str(row.get("Contractor Name") or "")) or "",
-        axis=1,
-    )
-    return display
-
-
-def _render_sortable_leaderboard(
+def _render_leaderboard_table(
     leaderboard: pd.DataFrame,
     *,
     table_key: str,
@@ -925,23 +891,56 @@ def _render_sortable_leaderboard(
 ) -> None:
     if leaderboard.empty:
         return
-    display = _prepare_leaderboard_display(leaderboard)
-    visible_columns = ["Rank", "Profile Link", money_column, share_column, awards_column, recent_column]
-    column_config = _leaderboard_column_config(
-        money_label=money_column,
-        share_label=share_column,
-        awards_label=awards_column,
-        recent_label=recent_column,
+    sort_options = {
+        f"{money_column} (high to low)": (money_column, False),
+        f"{money_column} (low to high)": (money_column, True),
+        f"{recent_column} (newest)": (recent_column, False),
+        f"{recent_column} (oldest)": (recent_column, True),
+        f"{awards_column} (most)": (awards_column, False),
+        f"{share_column} (high to low)": (share_column, False),
+        "Contractor Name (A-Z)": ("Contractor Name", True),
+        "Contractor Name (Z-A)": ("Contractor Name", False),
+    }
+    default_sort = f"{money_column} (high to low)"
+    sort_label = st.selectbox(
+        "Sort by",
+        list(sort_options.keys()),
+        index=list(sort_options.keys()).index(default_sort),
+        key=f"{table_key}-sort",
     )
-    st.caption("Click a column header to sort.")
-    st.dataframe(
-        display,
-        column_order=visible_columns,
-        column_config=column_config,
-        hide_index=True,
-        use_container_width=True,
-        height=_dataframe_height(len(display)),
-        key=table_key,
+    column, ascending = sort_options[sort_label]
+    sorted_df = _sort_table(leaderboard, column, ascending=ascending)
+    sorted_df = sorted_df.copy()
+    sorted_df["Rank"] = range(1, len(sorted_df) + 1)
+    rows = []
+    for row in sorted_df.to_dict("records"):
+        name = str(row.get("Contractor Name") or "")
+        contractor_uei = str(row.get("Primary UEI") or "")
+        obligations = format_full_money(row.get(money_column))
+        share = format_percent(row.get(share_column))
+        unique_awards = int(row.get(awards_column) or 0)
+        recent = row.get(recent_column)
+        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
+            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
+            f"<td>{html.escape(obligations)}</td>"
+            f"<td>{html.escape(share)}</td>"
+            f"<td>{unique_awards:,}</td>"
+            f"<td>{html.escape(recent_text)}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        f"""
+        <div class="competitor-table-wrap">
+          <table class="competitor-table">
+            <thead><tr><th>Rank</th><th>Contractor Name</th><th>{html.escape(money_column)}</th><th>{html.escape(share_column)}</th><th>{html.escape(awards_column)}</th><th>{html.escape(recent_column)}</th></tr></thead>
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -968,7 +967,7 @@ def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
         return
     if len(leaderboard) > 15:
         st.caption(f"Showing all {len(leaderboard):,} winning contractors.")
-    _render_sortable_leaderboard(
+    _render_leaderboard_table(
         leaderboard,
         table_key="recent-wins-leaderboard",
         money_column="Win Obligations",
@@ -1147,7 +1146,7 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
         return
     if len(leaderboard) > 15:
         st.caption(f"Showing all {len(leaderboard):,} contractors.")
-    _render_sortable_leaderboard(
+    _render_leaderboard_table(
         leaderboard,
         table_key="obligation-leaderboard",
         money_column="Obligations in Scope",
@@ -1258,38 +1257,52 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"awards-export-xlsx-{file_suffix}",
         )
-    display = visible.copy()
-    display["Profile Link"] = display.apply(
-        lambda row: usaspending_recipient_profile_url(str(row.get("Recipient UEI") or ""), str(row.get("Contractor") or "")) or "",
-        axis=1,
+    sort_options = {
+        "Obligations in Scope (high to low)": ("Obligations in Scope", False),
+        "Obligations in Scope (low to high)": ("Obligations in Scope", True),
+        "Contractor (A-Z)": ("Contractor", True),
+        "Contractor (Z-A)": ("Contractor", False),
+        "Award ID (A-Z)": ("Award ID", True),
+        "Award ID (Z-A)": ("Award ID", False),
+    }
+    sort_label = st.selectbox(
+        "Sort by",
+        list(sort_options.keys()),
+        key=f"awards-table-sort-{file_suffix}",
     )
-    display["Award Link"] = display["USAspending Award Link"].fillna("").astype(str)
-    visible_columns = [
-        "Profile Link",
-        "Award Link",
-        "Description",
-        "Obligations in Scope",
-        "Performance Location",
-        "Awarding Office",
-        "Funding Office",
-    ]
-    st.caption("Click a column header to sort.")
-    st.dataframe(
-        display,
-        column_order=visible_columns,
-        column_config={
-            "Profile Link": _profile_link_column("Contractor"),
-            "Award Link": _award_link_column("Award ID"),
-            "Description": st.column_config.TextColumn("Description", width="large"),
-            "Obligations in Scope": st.column_config.NumberColumn("Obligations in Scope", format=MONEY_TABLE_FORMAT),
-            "Performance Location": None,
-            "Awarding Office": None,
-            "Funding Office": None,
-        },
-        hide_index=True,
-        use_container_width=True,
-        height=_dataframe_height(len(display)),
-        key=f"awards-table-{file_suffix}",
+    column, ascending = sort_options[sort_label]
+    visible = _sort_table(visible, column, ascending=ascending)
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
+    rows = []
+    for row in visible.to_dict("records"):
+        award_link = row.get("USAspending Award Link") or ""
+        award = html.escape(str(row.get("Award ID") or "Unavailable"))
+        award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
+        contractor_markup = _contractor_link_markup(
+            str(row.get("Contractor") or ""),
+            uei=str(row.get("Recipient UEI") or ""),
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{contractor_markup}</td>"
+            f"<td>{award_markup}</td>"
+            f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
+            f"<td>{html.escape(format_full_money(row.get('Obligations in Scope')))}</td>"
+            f"<td>{html.escape(str(row.get('Performance Location') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('Awarding Office') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        f"""
+        <div class="{scroll_class}">
+          <table class="award-drilldown-table">
+            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Obligations in Scope</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
     )
 
 
