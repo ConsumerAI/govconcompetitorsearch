@@ -14,6 +14,7 @@ EXPORT_COLUMNS = [
     "Recipient UEI",
     "Award ID",
     "Description",
+    "Award Signed Date",
     "Obligations in Scope",
     "Current Award Value",
     "Award Ceiling",
@@ -26,14 +27,18 @@ EXPORT_COLUMNS = [
 def build_awards_export_frame(awards: pd.DataFrame) -> pd.DataFrame:
     if awards is None or awards.empty:
         return pd.DataFrame(columns=EXPORT_COLUMNS)
+    export = awards.copy()
+    if "Award Signed Date" in export.columns:
+        export["Award Signed Date"] = pd.to_datetime(export["Award Signed Date"], errors="coerce").dt.date
     rows = []
-    for row in awards.to_dict("records"):
+    for row in export.to_dict("records"):
         rows.append(
             {
                 "Contractor": str(row.get("Contractor") or ""),
                 "Recipient UEI": str(row.get("Recipient UEI") or ""),
                 "Award ID": row.get("Award ID"),
                 "Description": row.get("Description"),
+                "Award Signed Date": row.get("Award Signed Date"),
                 "Obligations in Scope": row.get("Obligations in Scope"),
                 "Current Award Value": row.get("Current Award Value"),
                 "Award Ceiling": row.get("Award Ceiling"),
@@ -42,7 +47,7 @@ def build_awards_export_frame(awards: pd.DataFrame) -> pd.DataFrame:
                 "Funding Office": row.get("Funding Office"),
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=EXPORT_COLUMNS)
 
 
 def awards_export_xlsx(awards: pd.DataFrame) -> bytes:

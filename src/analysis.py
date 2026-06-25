@@ -466,6 +466,7 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
         "Recipient UEI",
         "Award ID",
         "Description",
+        "Award Signed Date",
         "Obligations in Scope",
         "Current Award Value",
         "Award Ceiling",
@@ -481,12 +482,14 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
         latest = group.sort_values(["action_date", "row_order"], na_position="first").iloc[-1]
         contractor_name = latest["recipient_name"]
         contractor_uei = _first_nonempty_text(group["recipient_uei"])
+        signed_date = pd.to_datetime(latest["action_date"], errors="coerce")
         rows.append(
             {
                 "Contractor": contractor_name,
                 "Recipient UEI": contractor_uei,
                 "Award ID": latest["award_id_piid"],
                 "Description": latest["transaction_description"],
+                "Award Signed Date": signed_date.date() if pd.notna(signed_date) else None,
                 "Obligations in Scope": float(group["federal_action_obligation"].sum()),
                 "Current Award Value": float(latest["current_total_value_of_award"]),
                 "Award Ceiling": float(latest["potential_total_value_of_award"]),

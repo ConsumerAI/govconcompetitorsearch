@@ -981,24 +981,6 @@ def render_recent_wins_kpis(recent_wins: dict) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
-    if leaderboard.empty:
-        st.info("No new service awards found for this scope in the last 12 months.")
-        return
-    if len(leaderboard) > 15:
-        st.caption(f"Showing all {len(leaderboard):,} winning contractors.")
-    _render_leaderboard_table(
-        leaderboard,
-        table_key="recent-wins-leaderboard",
-        money_column="Win Obligations",
-        share_column="Share of Wins",
-        awards_column="New Service Awards",
-        recent_column="Most Recent Win",
-        export_file_name="recent-service-wins.xlsx",
-        export_worksheet_title="Recent Service Wins",
-    )
-
-
 def render_recent_wins_section(recent_wins: dict) -> None:
     if not recent_wins:
         return
@@ -1011,7 +993,8 @@ def render_recent_wins_section(recent_wins: dict) -> None:
             f"Services only: who is winning new work signed from {_date_label(start_date, long=True)} "
             f"through {_date_label(end_date, long=True)}. Includes new service contracts, task orders, "
             f"and delivery orders. Excludes follow-on funding on older awards and product-only purchases "
-            f"(federal product/service codes with numeric PSCs, such as equipment, parts, and commodities)."
+            f"(federal product/service codes with numeric PSCs, such as equipment, parts, and commodities). "
+            f"Click an Award ID to open the contract in USAspending and verify details."
         )
     if recent_wins.get("error"):
         st.warning("Recent service wins could not be loaded. Obligation activity results are still shown below.")
@@ -1028,7 +1011,76 @@ def render_recent_wins_section(recent_wins: dict) -> None:
         include_supply_purchases=include_supply,
     )
     render_recent_wins_kpis(display)
-    render_recent_wins_leaderboard(display.get("leaderboard", pd.DataFrame()))
+    render_recent_wins_table(display.get("awards", pd.DataFrame()))
+
+
+def render_recent_wins_table(awards: pd.DataFrame) -> None:
+    if awards.empty:
+        st.info("No new service awards found for this scope in the last 12 months.")
+        return
+    if len(awards) > 15:
+        st.caption(f"Showing all {len(awards):,} new service awards.")
+    _render_excel_export_button(
+        data=awards_export_xlsx(awards),
+        file_name="recent-service-wins.xlsx",
+        key="recent-wins-export",
+    )
+    obligations_column = "Obligations in Scope"
+    sort_options = {
+        "Award Signed Date (newest)": ("Award Signed Date", False),
+        "Award Signed Date (oldest)": ("Award Signed Date", True),
+        "Win Obligations (high to low)": (obligations_column, False),
+        "Win Obligations (low to high)": (obligations_column, True),
+        "Contractor (A-Z)": ("Contractor", True),
+        "Contractor (Z-A)": ("Contractor", False),
+        "Award ID (A-Z)": ("Award ID", True),
+        "Award ID (Z-A)": ("Award ID", False),
+    }
+    default_sort = "Award Signed Date (newest)"
+    sort_label = st.selectbox(
+        "Sort by",
+        list(sort_options.keys()),
+        index=list(sort_options.keys()).index(default_sort),
+        key="recent-wins-sort",
+    )
+    column, ascending = sort_options[sort_label]
+    sorted_df = _sort_table(awards, column, ascending=ascending)
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 15 else "award-drilldown-table-wrap"
+    rows = []
+    for row in sorted_df.to_dict("records"):
+        award_link = row.get("USAspending Award Link") or ""
+        award = html.escape(str(row.get("Award ID") or "Unavailable"))
+        award_markup = (
+            f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>'
+            if award_link
+            else award
+        )
+        contractor_markup = _contractor_link_markup(
+            str(row.get("Contractor") or ""),
+            uei=str(row.get("Recipient UEI") or ""),
+        )
+        signed = row.get("Award Signed Date")
+        signed_text = signed.isoformat() if pd.notna(signed) and signed else ""
+        rows.append(
+            "<tr>"
+            f"<td>{contractor_markup}</td>"
+            f"<td>{award_markup}</td>"
+            f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
+            f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
+            f"<td>{html.escape(signed_text)}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        f"""
+        <div class="{scroll_class}">
+          <table class="award-drilldown-table">
+            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Win Obligations</th><th>Award Signed Date</th></tr></thead>
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _chip_removal_target(chip_id: str, analyzed: FilterSnapshot) -> tuple[FilterSnapshot | None, dict[str, object]]:
@@ -1267,18 +1319,41 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         st.info("No award rows found for this scope.")
         return
     file_suffix = "selected-contractors" if contractor_names else "all-contractors"
-    visible = awards if contractor_names else awards.head(25)
-    caption = f"Showing {len(visible):,} awards. Scroll the table for more." if len(visible) > 15 else ""
+    visible_count = len(awards) if contractor_names else min(len(awards), 25)
+    caption = f"Showing {visible_count:,} awards. Scroll the table for more." if visible_count > 15 else ""
     if caption:
         st.caption(caption)
+    _render_awards_drilldown_table(
+        awards,
+        table_key=f"awards-table-{file_suffix}",
+        export_file_name=f"top-relevant-awards-{file_suffix}.xlsx",
+        max_rows=None if contractor_names else 25,
+    )
+
+
+def _render_awards_drilldown_table(
+    awards: pd.DataFrame,
+    *,
+    table_key: str,
+    export_file_name: str,
+    max_rows: int | None = 25,
+    obligations_header: str | None = None,
+) -> None:
+    if awards.empty:
+        return
+    obligations_column = "Obligations in Scope"
+    obligations_label = obligations_header or obligations_column
+    visible = awards if max_rows is None else awards.head(max_rows)
+    if max_rows is not None and len(awards) > len(visible):
+        st.caption(f"Showing top {len(visible):,} of {len(awards):,} awards by {obligations_label.lower()}. Export includes all awards.")
     _render_excel_export_button(
         data=awards_export_xlsx(awards),
-        file_name=f"top-relevant-awards-{file_suffix}.xlsx",
-        key=f"awards-export-xlsx-{file_suffix}",
+        file_name=export_file_name,
+        key=f"{table_key}-export",
     )
     sort_options = {
-        "Obligations in Scope (high to low)": ("Obligations in Scope", False),
-        "Obligations in Scope (low to high)": ("Obligations in Scope", True),
+        f"{obligations_label} (high to low)": (obligations_column, False),
+        f"{obligations_label} (low to high)": (obligations_column, True),
         "Contractor (A-Z)": ("Contractor", True),
         "Contractor (Z-A)": ("Contractor", False),
         "Award ID (A-Z)": ("Award ID", True),
@@ -1287,7 +1362,7 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
     sort_label = st.selectbox(
         "Sort by",
         list(sort_options.keys()),
-        key=f"awards-table-sort-{file_suffix}",
+        key=f"{table_key}-sort",
     )
     column, ascending = sort_options[sort_label]
     visible = _sort_table(visible, column, ascending=ascending)
@@ -1306,7 +1381,7 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
             f"<td>{contractor_markup}</td>"
             f"<td>{award_markup}</td>"
             f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
-            f"<td>{html.escape(format_full_money(row.get('Obligations in Scope')))}</td>"
+            f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
             f"<td>{html.escape(str(row.get('Performance Location') or ''))}</td>"
             f"<td>{html.escape(str(row.get('Awarding Office') or ''))}</td>"
             f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
@@ -1316,7 +1391,7 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         f"""
         <div class="{scroll_class}">
           <table class="award-drilldown-table">
-            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Obligations in Scope</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
+            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>{html.escape(obligations_label)}</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
             <tbody>
         """
         + "".join(rows)
