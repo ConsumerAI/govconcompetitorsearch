@@ -5,7 +5,17 @@ from collections import Counter
 import pandas as pd
 
 from .agency_components import get_agency_component_config
-from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, COUNTRY_NAMES, OPTION_SEPARATOR, STATE_OPTIONS
+from .constants import (
+    ALL_COMPONENTS,
+    ALL_LOCATIONS,
+    ALL_NAICS,
+    ALL_SET_ASIDES,
+    COUNTRY_NAMES,
+    OPTION_SEPARATOR,
+    SET_ASIDE_DOWNLOAD_LABELS,
+    SET_ASIDE_TYPE_OPTIONS,
+    STATE_OPTIONS,
+)
 from .state import FilterSnapshot
 from .utils import (
     clean_text,
@@ -147,7 +157,7 @@ def normalize_transactions(rows: list[dict], default_agency: str = "") -> pd.Dat
                 "awarding_office_name": awarding_name,
                 "naics_code": naics_code or clean_text(_field(row, ["naics_code", "NAICS Code", "naics"])),
                 "naics_description": naics_description or clean_text(_field(row, ["naics_description", "NAICS Description", "naics_desc"])),
-                "set_aside_type": clean_text(
+                "set_aside_type": normalize_set_aside_code(
                     _field(row, ["set_aside_type", "set_aside_type_code", "type_of_set_aside", "Set-Aside Type"])
                 ),
                 "place_of_performance_country_code": country_code,
@@ -211,6 +221,25 @@ def build_location_options(transactions: pd.DataFrame) -> list[str]:
 
 def option_code(option: str) -> str:
     return clean_text(str(option).split(" - ", 1)[0].split(OPTION_SEPARATOR, 1)[0])
+
+
+def normalize_set_aside_code(value: str) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    if text in SET_ASIDE_TYPE_OPTIONS:
+        return text
+    if " - " in text:
+        code = clean_text(text.split(" - ", 1)[0])
+        if code in SET_ASIDE_TYPE_OPTIONS:
+            return code
+    upper = text.upper()
+    if upper in SET_ASIDE_DOWNLOAD_LABELS:
+        return SET_ASIDE_DOWNLOAD_LABELS[upper]
+    for code, label in SET_ASIDE_TYPE_OPTIONS.items():
+        if upper == label.upper():
+            return code
+    return text
 
 
 def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) -> pd.DataFrame:

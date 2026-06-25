@@ -161,6 +161,31 @@ class FilterAndOutputTests(unittest.TestCase):
         self.assertEqual(len(scoped), 1)
         self.assertEqual(scoped["set_aside_type"].iloc[0], "WOSB")
 
+    def test_set_aside_filter_matches_usaspending_download_label(self):
+        rows = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "awarding_sub_agency_name": "Defense Health Agency",
+                    "federal_action_obligation": "1000",
+                    "action_date": "2025-01-01",
+                    "recipient_name": "Example Vendor",
+                    "award_id_piid": "DHA-1",
+                    "type_of_set_aside": "8A COMPETED",
+                }
+            ]
+        )
+        scoped = filter_transactions(
+            rows,
+            FilterSnapshot(
+                agency="Department of Defense",
+                component="Defense Health Agency",
+                set_aside="8A - 8(a) Competed",
+            ),
+        )
+        self.assertEqual(len(scoped), 1)
+        self.assertEqual(scoped["set_aside_type"].iloc[0], "8A")
+
     def test_encoded_naics_option_filters_by_code(self):
         scoped = filter_transactions(
             sample_transactions(),

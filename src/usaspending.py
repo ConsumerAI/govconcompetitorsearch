@@ -83,14 +83,12 @@ DOWNLOAD_TRANSACTION_COLUMNS = [
     "awarding_office_name",
     "funding_office_code",
     "funding_office_name",
-]
-
-OPTION_INDEX_DOWNLOAD_COLUMNS = [
-    *DOWNLOAD_TRANSACTION_COLUMNS,
     "type_of_set_aside",
     "primary_place_of_performance_country_code",
     "primary_place_of_performance_state_code",
 ]
+
+OPTION_INDEX_DOWNLOAD_COLUMNS = DOWNLOAD_TRANSACTION_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -1106,7 +1104,7 @@ def fetch_transactions_cached(
     )
 
 
-def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
+def api_snapshot_for_fetch(snapshot: FilterSnapshot) -> FilterSnapshot:
     api_snapshot = snapshot
     config = get_agency_component_config(snapshot.agency)
     if config["dimension_type"] == "funding_office":
@@ -1132,6 +1130,11 @@ def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=
                 start_date=snapshot.start_date,
                 end_date=snapshot.end_date,
             )
+    return api_snapshot
+
+
+def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
+    api_snapshot = api_snapshot_for_fetch(snapshot)
     args = (
         api_snapshot.agency,
         api_snapshot.component,

@@ -283,11 +283,10 @@ def current_source_period_end() -> str:
 
 
 def _normalize_set_aside(code: object) -> tuple[str, str]:
-    text = clean_text(code)
-    if " - " in text:
-        code_part, description = text.split(" - ", 1)
-        return clean_text(code_part), clean_text(description)
-    return text, SET_ASIDE_TYPE_OPTIONS.get(text, "")
+    from .analysis import normalize_set_aside_code
+
+    normalized = normalize_set_aside_code(clean_text(code))
+    return normalized, SET_ASIDE_TYPE_OPTIONS.get(normalized, "")
 
 
 def _fixture_source_rows() -> list[dict]:
