@@ -75,3 +75,46 @@ def awards_export_xlsx(awards: pd.DataFrame) -> bytes:
     workbook.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def build_leaderboard_export_frame(leaderboard: pd.DataFrame) -> pd.DataFrame:
+    if leaderboard is None or leaderboard.empty:
+        return pd.DataFrame()
+    export = leaderboard.copy()
+    for date_column in ("Most Recent Win", "Most Recent Action Date"):
+        if date_column in export.columns:
+            export[date_column] = pd.to_datetime(export[date_column], errors="coerce").dt.date
+    return export
+
+
+def leaderboard_export_xlsx(leaderboard: pd.DataFrame, *, worksheet_title: str) -> bytes:
+    export_df = build_leaderboard_export_frame(leaderboard)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = worksheet_title[:31]
+    headers = list(export_df.columns)
+    worksheet.append(headers)
+    if export_df.empty:
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+    link_font = Font(color="0563C1", underline="single")
+    contractor_col = headers.index("Contractor Name") + 1 if "Contractor Name" in headers else None
+    for export_row, source_row in zip(export_df.to_dict("records"), leaderboard.to_dict("records")):
+        worksheet.append([export_row.get(header) for header in headers])
+        if contractor_col is None:
+            continue
+        row_idx = worksheet.max_row
+        profile_url = usaspending_recipient_profile_url(
+            str(source_row.get("Primary UEI") or ""),
+            str(source_row.get("Contractor Name") or ""),
+        )
+        contractor_cell = worksheet.cell(row=row_idx, column=contractor_col)
+        if profile_url:
+            contractor_cell.hyperlink = profile_url
+            contractor_cell.font = link_font
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()

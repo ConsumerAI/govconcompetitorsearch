@@ -8,7 +8,13 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from src.analysis import contractors_combined_detail, filter_transactions_for_contractors
-from src.awards_export import EXPORT_COLUMNS, awards_export_xlsx, build_awards_export_frame
+from src.awards_export import (
+    EXPORT_COLUMNS,
+    awards_export_xlsx,
+    build_awards_export_frame,
+    build_leaderboard_export_frame,
+    leaderboard_export_xlsx,
+)
 from src.state import FilterSnapshot
 from tests.test_analysis import sample_transactions
 
@@ -61,6 +67,37 @@ class AwardsExportTests(unittest.TestCase):
         award_cell = worksheet.cell(row=2, column=award_id_col)
         self.assertEqual(contractor_cell.hyperlink.target, "https://www.usaspending.gov/recipient/test/latest")
         self.assertTrue(str(award_cell.hyperlink.target).startswith("https://www.usaspending.gov/award/"))
+
+
+class LeaderboardExportTests(unittest.TestCase):
+    def test_leaderboard_export_frame_formats_dates(self):
+        from src.analysis import recent_wins_leaderboard
+
+        leaderboard = recent_wins_leaderboard(sample_transactions())
+        export_df = build_leaderboard_export_frame(leaderboard)
+        self.assertIn("Contractor Name", export_df.columns)
+        self.assertIn("Primary UEI", export_df.columns)
+        if not export_df.empty and "Most Recent Win" in export_df.columns:
+            recent = export_df.iloc[0]["Most Recent Win"]
+            self.assertIsNotNone(recent)
+
+    def test_leaderboard_excel_hyperlinks_contractor_name(self):
+        from src.analysis import recent_wins_leaderboard
+
+        leaderboard = recent_wins_leaderboard(sample_transactions())
+        with mock.patch(
+            "src.awards_export.usaspending_recipient_profile_url",
+            return_value="https://www.usaspending.gov/recipient/test/latest",
+        ):
+            xlsx_bytes = leaderboard_export_xlsx(leaderboard, worksheet_title="Recent Service Wins")
+        workbook = load_workbook(io.BytesIO(xlsx_bytes))
+        worksheet = workbook.active
+        self.assertEqual(worksheet.title, "Recent Service Wins")
+        headers = [cell.value for cell in worksheet[1]]
+        contractor_col = headers.index("Contractor Name") + 1
+        if worksheet.max_row >= 2:
+            contractor_cell = worksheet.cell(row=2, column=contractor_col)
+            self.assertEqual(contractor_cell.hyperlink.target, "https://www.usaspending.gov/recipient/test/latest")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from .analysis import (
     filter_transactions,
     filter_transactions_for_contractors,
 )
-from .awards_export import awards_export_xlsx
+from .awards_export import awards_export_xlsx, leaderboard_export_xlsx
 from .constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES, STATE_OPTIONS
 from .global_filter_options import (
     global_location_option_values,
@@ -869,6 +869,19 @@ def _contractor_link_markup(name: str, *, uei: str = "") -> str:
     return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
 
 
+def _render_excel_export_button(*, data: bytes, file_name: str, key: str) -> None:
+    export_col, _ = st.columns([1.55, 6.45], vertical_alignment="bottom")
+    with export_col:
+        st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
+        st.download_button(
+            "Export to Excel",
+            data=data,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=key,
+        )
+
+
 def _sort_table(
     frame: pd.DataFrame,
     sort_by: str,
@@ -888,9 +901,16 @@ def _render_leaderboard_table(
     share_column: str,
     awards_column: str,
     recent_column: str,
+    export_file_name: str,
+    export_worksheet_title: str,
 ) -> None:
     if leaderboard.empty:
         return
+    _render_excel_export_button(
+        data=leaderboard_export_xlsx(leaderboard, worksheet_title=export_worksheet_title),
+        file_name=export_file_name,
+        key=f"{table_key}-export",
+    )
     sort_options = {
         f"{money_column} (high to low)": (money_column, False),
         f"{money_column} (low to high)": (money_column, True),
@@ -974,6 +994,8 @@ def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
         share_column="Share of Wins",
         awards_column="New Service Awards",
         recent_column="Most Recent Win",
+        export_file_name="recent-service-wins.xlsx",
+        export_worksheet_title="Recent Service Wins",
     )
 
 
@@ -1153,6 +1175,8 @@ def render_leaderboard(leaderboard: pd.DataFrame) -> None:
         share_column="Market Share",
         awards_column="Unique Awards",
         recent_column="Most Recent Action Date",
+        export_file_name="top-competitors-by-obligations.xlsx",
+        export_worksheet_title="Top Competitors",
     )
 
 
@@ -1247,16 +1271,11 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
     caption = f"Showing {len(visible):,} awards. Scroll the table for more." if len(visible) > 15 else ""
     if caption:
         st.caption(caption)
-    export_col, _ = st.columns([1.55, 6.45], vertical_alignment="bottom")
-    with export_col:
-        st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
-        st.download_button(
-            "Export to Excel",
-            data=awards_export_xlsx(awards),
-            file_name=f"top-relevant-awards-{file_suffix}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"awards-export-xlsx-{file_suffix}",
-        )
+    _render_excel_export_button(
+        data=awards_export_xlsx(awards),
+        file_name=f"top-relevant-awards-{file_suffix}.xlsx",
+        key=f"awards-export-xlsx-{file_suffix}",
+    )
     sort_options = {
         "Obligations in Scope (high to low)": ("Obligations in Scope", False),
         "Obligations in Scope (low to high)": ("Obligations in Scope", True),
