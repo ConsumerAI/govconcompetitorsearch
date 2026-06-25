@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import html
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import date
-import time
 
 import pandas as pd
 import streamlit as st
@@ -12,6 +12,7 @@ import streamlit as st
 from .agency_components import get_agency_component_config
 from .analysis import (
     analyze,
+    analyze_recent_wins,
     award_table,
     contractors_combined_detail,
     filter_transactions,
@@ -41,7 +42,7 @@ from .state import (
     default_start_date,
     snapshots_differ,
 )
-from .usaspending import fetch_transactions_for_snapshot
+from .usaspending import fetch_recent_wins_for_snapshot, fetch_transactions_for_snapshot
 from .utils import clean_text, decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url, warm_recipient_profile_cache
 
 UNAVAILABLE = "Unable to load options"
@@ -70,6 +71,7 @@ def init_streamlit_state() -> None:
     st.session_state.setdefault("component_request_generation", 0)
     st.session_state.setdefault("naics_request_generation", 0)
     st.session_state.setdefault("option_index_refresh_needed", False)
+    st.session_state.setdefault("recent_wins_transactions", pd.DataFrame())
     st.session_state.setdefault("selected_contractors", [])
     legacy_contractor = st.session_state.pop("selected_contractor", None)
     if legacy_contractor and not st.session_state.get("selected_contractors"):
@@ -813,7 +815,119 @@ def render_scope_line(results: dict) -> None:
     start_date = period.get("start_date")
     end_date = period.get("end_date")
     if start_date and end_date:
-        st.caption(f"Competitor activity from {_date_label(start_date, long=True)} through {_date_label(end_date, long=True)}")
+        st.caption(f"Obligation activity from {_date_label(start_date, long=True)} through {_date_label(end_date, long=True)}")
+
+
+def _fetch_analysis_datasets(
+    pending: FilterSnapshot,
+    progress_callback=None,
+) -> tuple[pd.DataFrame, dict, pd.DataFrame, dict]:
+    if progress_callback:
+        progress_callback("Loading recent contract wins and competitor activity...")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        activity_future = pool.submit(fetch_transactions_for_snapshot, pending)
+        wins_future = pool.submit(fetch_recent_wins_for_snapshot, pending)
+        transactions, diagnostic = activity_future.result()
+        wins_transactions, wins_diagnostic = wins_future.result()
+    return transactions, diagnostic, wins_transactions, wins_diagnostic
+
+
+def _build_analysis_results(
+    pending: FilterSnapshot,
+    transactions: pd.DataFrame,
+    diagnostic: dict,
+    wins_transactions: pd.DataFrame,
+    wins_diagnostic: dict,
+) -> dict:
+    scoped = filter_transactions(transactions, pending)
+    period = diagnostic.get("period", {})
+    results = analyze(scoped, FilterSnapshot(), period=period)
+    if wins_diagnostic.get("error"):
+        results["recent_wins"] = {
+            "error": wins_diagnostic["error"],
+            "period": wins_diagnostic.get("period", {}),
+            "leaderboard": pd.DataFrame(),
+            "awards": pd.DataFrame(),
+            "kpis": {"new_awards": 0, "contractors": 0, "win_obligations": 0.0},
+            "transactions": pd.DataFrame(),
+        }
+    else:
+        wins_scoped = filter_transactions(wins_transactions, pending)
+        results["recent_wins"] = analyze_recent_wins(wins_scoped, period=wins_diagnostic.get("period", {}))
+    return results
+
+
+def render_recent_wins_kpis(recent_wins: dict) -> None:
+    kpis = recent_wins.get("kpis") or {}
+    st.markdown('<div class="metric-grid">', unsafe_allow_html=True)
+    cols = st.columns(3)
+    with cols[0]:
+        metric_card("New Awards Won", f"{int(kpis.get('new_awards', 0)):,}", "Distinct awards signed in the last 12 months", "#22d3ee")
+    with cols[1]:
+        metric_card("Winning Contractors", f"{int(kpis.get('contractors', 0)):,}", "Contractors with at least one new award", "#34d399")
+    with cols[2]:
+        metric_card("Win Obligations", format_money(kpis.get("win_obligations", 0.0)), "Obligations on new awards in scope", "#a78bfa")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
+    if leaderboard.empty:
+        st.info("No new awards found for this scope in the last 12 months.")
+        return
+    if len(leaderboard) > 15:
+        st.caption(f"Showing all {len(leaderboard):,} winning contractors. Scroll the table for more.")
+    rows = []
+    for row in leaderboard.to_dict("records"):
+        name = str(row.get("Contractor Name") or "")
+        contractor_uei = str(row.get("Primary UEI") or "")
+        new_awards = int(row.get("New Awards Won") or 0)
+        obligations = format_full_money(row.get("Win Obligations"))
+        share = format_percent(row.get("Share of Wins"))
+        recent = row.get("Most Recent Win")
+        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
+            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
+            f"<td>{new_awards:,}</td>"
+            f"<td>{html.escape(obligations)}</td>"
+            f"<td>{html.escape(share)}</td>"
+            f"<td>{html.escape(recent_text)}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        """
+        <div class="competitor-table-wrap">
+          <table class="competitor-table">
+            <thead><tr><th>Rank</th><th>Contractor Name</th><th>New Awards Won</th><th>Win Obligations</th><th>Share of Wins</th><th>Most Recent Win</th></tr></thead>
+            <tbody>"""
+        + "".join(rows)
+        + """</tbody>
+          </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_recent_wins_section(recent_wins: dict) -> None:
+    if not recent_wins:
+        return
+    st.markdown('<div class="section-title">Recent Contract Wins</div>', unsafe_allow_html=True)
+    period = recent_wins.get("period") or {}
+    start_date = period.get("start_date")
+    end_date = period.get("end_date")
+    if start_date and end_date:
+        st.caption(
+            f"Who is winning work now: new awards signed from {_date_label(start_date, long=True)} "
+            f"through {_date_label(end_date, long=True)}. Includes new contracts and task orders; "
+            f"excludes follow-on funding on older awards."
+        )
+    if recent_wins.get("error"):
+        st.warning("Recent contract wins could not be loaded. Obligation activity results are still shown below.")
+        return
+    render_recent_wins_kpis(recent_wins)
+    render_recent_wins_leaderboard(recent_wins.get("leaderboard", pd.DataFrame()))
 
 
 def _chip_removal_target(chip_id: str, analyzed: FilterSnapshot) -> tuple[FilterSnapshot | None, dict[str, object]]:
@@ -857,18 +971,26 @@ def _apply_analysis_snapshot(
 ) -> bool:
     diagnostic: dict = {}
     if download or st.session_state.base_transactions.empty:
-        transactions, diagnostic = fetch_transactions_for_snapshot(pending, progress_callback=progress_callback)
+        transactions, diagnostic, wins_transactions, wins_diagnostic = _fetch_analysis_datasets(
+            pending,
+            progress_callback=progress_callback,
+        )
         st.session_state.last_data_diagnostics = diagnostic
         if diagnostic.get("error"):
             st.session_state.last_data_error = diagnostic["error"]
             return False
         st.session_state.last_data_error = ""
         st.session_state.base_transactions = transactions
+        st.session_state.recent_wins_transactions = wins_transactions
     else:
         transactions = st.session_state.base_transactions
         diagnostic = st.session_state.last_data_diagnostics or {}
+        wins_transactions = st.session_state.recent_wins_transactions
+        wins_diagnostic = {
+            "period": (st.session_state.analysis_results or {}).get("recent_wins", {}).get("period", {}),
+            "error": "",
+        }
 
-    scoped = filter_transactions(transactions, pending)
     period = diagnostic.get("period") or {}
     if not download and st.session_state.analysis_results:
         period = period or st.session_state.analysis_results.get("period", {})
@@ -881,7 +1003,13 @@ def _apply_analysis_snapshot(
         start_date=period.get("start_date", pending.start_date),
         end_date=period.get("end_date", pending.end_date),
     )
-    st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
+    st.session_state.analysis_results = _build_analysis_results(
+        pending,
+        transactions,
+        diagnostic,
+        wins_transactions,
+        wins_diagnostic,
+    )
     st.session_state.analyzed_snapshot = analyzed_snapshot
     return True
 
@@ -894,6 +1022,7 @@ def _handle_chip_removal(chip_id: str, analyzed: FilterSnapshot, *, progress_cal
         st.session_state.analysis_results = None
         st.session_state.analyzed_snapshot = None
         st.session_state.base_transactions = pd.DataFrame()
+        st.session_state.recent_wins_transactions = pd.DataFrame()
         st.session_state.last_data_error = ""
         if widget_updates:
             _defer_widget_updates(**widget_updates)
@@ -940,7 +1069,7 @@ def _contractor_link_markup(name: str, *, uei: str = "") -> str:
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
-    st.markdown('<div class="section-title">Top Competitors</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Top Competitors by Obligations</div>', unsafe_allow_html=True)
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
         return
@@ -1188,14 +1317,16 @@ def main() -> None:
         if st.button("Find Competitors", type="primary", disabled=disabled):
             progress = st.empty()
             with st.spinner("Fetching USAspending transactions and ranking competitors..."):
-                transactions, diagnostic = fetch_transactions_for_snapshot(pending, progress_callback=progress.info)
+                transactions, diagnostic, wins_transactions, wins_diagnostic = _fetch_analysis_datasets(
+                    pending,
+                    progress_callback=progress.info,
+                )
                 st.session_state.last_data_diagnostics = diagnostic
                 if diagnostic.get("error"):
                     st.session_state.last_data_error = diagnostic["error"]
                     st.error("Unable to load the complete selected date range. No new analysis was applied.")
                 else:
                     st.session_state.last_data_error = ""
-                    scoped = filter_transactions(transactions, pending)
                     period = diagnostic.get("period", {})
                     analyzed_snapshot = FilterSnapshot(
                         agency=pending.agency,
@@ -1206,11 +1337,17 @@ def main() -> None:
                         start_date=period.get("start_date", pending.start_date),
                         end_date=period.get("end_date", pending.end_date),
                     )
-                    st.session_state.analysis_results = analyze(scoped, FilterSnapshot(), period=period)
+                    st.session_state.analysis_results = _build_analysis_results(
+                        pending,
+                        transactions,
+                        diagnostic,
+                        wins_transactions,
+                        wins_diagnostic,
+                    )
                     st.session_state.analyzed_snapshot = analyzed_snapshot
                     st.session_state.selected_contractors = []
-                    if not transactions.empty:
-                        st.session_state.base_transactions = transactions
+                    st.session_state.base_transactions = transactions
+                    st.session_state.recent_wins_transactions = wins_transactions
             progress.empty()
     if st.session_state.last_data_error:
         render_diagnostics(st.session_state.last_data_diagnostics)
@@ -1225,6 +1362,7 @@ def main() -> None:
         )
     config = get_agency_component_config(analyzed.agency)
     render_applied_filters(analyzed, config["label"])
+    render_recent_wins_section(results.get("recent_wins") or {})
     render_scope_line(results)
     render_kpis(results)
     render_leaderboard(results["leaderboard"])

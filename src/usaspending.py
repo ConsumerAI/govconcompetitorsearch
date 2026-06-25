@@ -31,7 +31,7 @@ from .constants import (
     SET_ASIDE_TYPE_OPTIONS,
     STATE_OPTIONS,
 )
-from .state import FilterSnapshot, default_end_date, default_start_date
+from .state import FilterSnapshot, default_end_date, default_start_date, recent_wins_period
 from .utils import clean_text, encode_option, format_option
 
 
@@ -369,12 +369,23 @@ def location_filter(location: str) -> dict | None:
     return {"country": code}
 
 
-def base_filters(snapshot: FilterSnapshot, *, subtier_filter_type: str | None = None) -> dict:
+NEW_AWARDS_DATE_TYPE = "new_awards_only"
+
+
+def base_filters(
+    snapshot: FilterSnapshot,
+    *,
+    subtier_filter_type: str | None = None,
+    date_type: str | None = None,
+) -> dict:
+    time_period = {"start_date": snapshot.start_date, "end_date": snapshot.end_date}
+    if date_type:
+        time_period["date_type"] = date_type
     filters = {
         "agencies": agency_filter(snapshot.agency, snapshot.component, subtier_filter_type=subtier_filter_type),
         "award_type_codes": AWARD_TYPE_CODES,
         "award_or_idv_flag": AWARD_OR_IDV_FLAG,
-        "time_period": [{"start_date": snapshot.start_date, "end_date": snapshot.end_date}],
+        "time_period": [time_period],
     }
     if snapshot.naics != ALL_NAICS:
         filters["naics_codes"] = {"require": [option_code(snapshot.naics)]}
@@ -405,9 +416,10 @@ def transaction_download_payload(
     limit: int | None = None,
     *,
     columns: list[str] | None = None,
+    date_type: str | None = None,
 ) -> dict:
     payload = {
-        "filters": base_filters(snapshot),
+        "filters": base_filters(snapshot, date_type=date_type),
         "columns": columns or DOWNLOAD_TRANSACTION_COLUMNS,
         "file_format": "csv",
     }
@@ -828,9 +840,31 @@ def set_aside_options() -> list[str]:
     return [ALL_SET_ASIDES] + [f"{code} - {label}" for code, label in sorted(SET_ASIDE_TYPE_OPTIONS.items(), key=lambda item: item[1])]
 
 
-def query_fingerprint(snapshot: FilterSnapshot, *, option_category: str = "") -> str:
+def recent_wins_snapshot(snapshot: FilterSnapshot) -> FilterSnapshot:
+    start_date, end_date = recent_wins_period()
+    return FilterSnapshot(
+        agency=snapshot.agency,
+        component=snapshot.component,
+        naics=snapshot.naics,
+        set_aside=snapshot.set_aside,
+        location=snapshot.location,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+def recent_wins_period_metadata(snapshot: FilterSnapshot | None = None) -> dict:
+    metadata = period_metadata(snapshot)
+    metadata["date_type"] = NEW_AWARDS_DATE_TYPE
+    metadata["ytd_cutoff_logic"] = "rolling twelve-month new awards only"
+    return metadata
+
+
+def query_fingerprint(snapshot: FilterSnapshot, *, option_category: str = "", date_type: str = "") -> str:
     config = get_agency_component_config(snapshot.agency)
     period = {"option_data_version": "six-year-option-discovery"} if option_category else period_metadata(snapshot)
+    if date_type:
+        period = {**period, "date_type": date_type}
     payload = {
         "agency": snapshot.agency,
         "component": snapshot.component,
@@ -862,9 +896,10 @@ def fetch_transaction_download_rows(
     allow_truncated: bool = False,
     download_limit: int | None = OPTION_DISCOVERY_DOWNLOAD_LIMIT,
     columns: list[str] | None = None,
+    date_type: str | None = None,
 ) -> tuple[list[dict], dict]:
     endpoint = "/api/v2/download/transactions/"
-    payload = transaction_download_payload(snapshot, limit=download_limit, columns=columns)
+    payload = transaction_download_payload(snapshot, limit=download_limit, columns=columns, date_type=date_type)
     diagnostics = {
         "endpoint": endpoint,
         "method": "POST",
@@ -987,20 +1022,27 @@ def fetch_transactions_uncached(
     query_fingerprint_value: str,
     max_pages: int = 25,
     progress_callback=None,
+    *,
+    date_type: str = "",
 ) -> tuple[pd.DataFrame, dict]:
     snapshot = FilterSnapshot(agency=agency, component=component, naics=naics, set_aside=set_aside, location=location, start_date=start_date, end_date=end_date)
     segments = federal_fiscal_year_segments(start_date, end_date)
     all_download_rows: list[dict] = []
     payloads = []
     segment_diagnostics = []
+    period = recent_wins_period_metadata(snapshot) if date_type == NEW_AWARDS_DATE_TYPE else period_metadata(snapshot)
+    loading_label = "recent contract wins" if date_type == NEW_AWARDS_DATE_TYPE else "competitor data"
     for index, segment in enumerate(segments, start=1):
         if progress_callback:
-            progress_callback(f"Loading competitor data: {index} of {len(segments)} periods")
+            progress_callback(f"Loading {loading_label}: {index} of {len(segments)} periods")
         segment_snapshot = snapshot_for_segment(snapshot, segment)
         download_rows: list[dict] = []
         download_diag: dict = {}
         for attempt in range(1, SEGMENT_ATTEMPTS + 1):
-            download_rows, download_diag = fetch_transaction_download_rows(segment_snapshot)
+            download_rows, download_diag = fetch_transaction_download_rows(
+                segment_snapshot,
+                date_type=date_type or None,
+            )
             if not download_diag.get("error"):
                 break
             error_diag = download_diag["error"]
@@ -1013,9 +1055,9 @@ def fetch_transactions_uncached(
             error["segment"] = segment
             error["attempts"] = attempt
             return normalize_transactions([], default_agency=agency), {
-                "payloads": payloads + [transaction_download_payload(segment_snapshot)],
+                "payloads": payloads + [transaction_download_payload(segment_snapshot, date_type=date_type or None)],
                 "segments": segment_diagnostics,
-                "period": period_metadata(snapshot),
+                "period": period,
                 "query_fingerprint": query_fingerprint_value,
                 "error": "Unable to load the complete selected date range. No new analysis was applied.",
                 "failures": [error],
@@ -1032,19 +1074,19 @@ def fetch_transactions_uncached(
     if all_download_rows:
         deduped_rows, dedupe_diag = _dedupe_exact_transactions(all_download_rows)
         if progress_callback:
-            progress_callback("Calculating competitors")
+            progress_callback("Calculating recent winners" if date_type == NEW_AWARDS_DATE_TYPE else "Calculating competitors")
         return normalize_transactions(deduped_rows, default_agency=agency), {
             "payloads": payloads,
             "segments": segment_diagnostics,
             "download": {"segments": segment_diagnostics, **dedupe_diag},
             "dedupe": dedupe_diag,
-            "period": period_metadata(snapshot),
+            "period": period,
             "query_fingerprint": query_fingerprint_value,
             "error": "",
             "failures": [],
         }
     rows = []
-    payloads = [transaction_download_payload(snapshot)]
+    payloads = [transaction_download_payload(snapshot, date_type=date_type or None)]
     failures = []
     for page in range(1, max_pages + 1):
         payload = transaction_payload(snapshot, page=page)
@@ -1072,7 +1114,7 @@ def fetch_transactions_uncached(
             break
     return normalize_transactions(rows, default_agency=agency), {
         "payloads": payloads,
-        "period": period_metadata(snapshot),
+        "period": period,
         "query_fingerprint": query_fingerprint_value,
         "error": "",
         "failures": failures,
@@ -1090,6 +1132,7 @@ def fetch_transactions_cached(
     end_date: str,
     query_fingerprint_value: str,
     max_pages: int = 25,
+    date_type: str = "",
 ) -> tuple[pd.DataFrame, dict]:
     return fetch_transactions_uncached(
         agency,
@@ -1101,6 +1144,7 @@ def fetch_transactions_cached(
         end_date,
         query_fingerprint_value,
         max_pages=max_pages,
+        date_type=date_type,
     )
 
 
@@ -1133,9 +1177,27 @@ def api_snapshot_for_fetch(snapshot: FilterSnapshot) -> FilterSnapshot:
     return api_snapshot
 
 
-def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
-    api_snapshot = api_snapshot_for_fetch(snapshot)
-    args = (
+def _fetch_transactions_for_api_snapshot(
+    api_snapshot: FilterSnapshot,
+    *,
+    progress_callback=None,
+    date_type: str = "",
+) -> tuple[pd.DataFrame, dict]:
+    fingerprint = query_fingerprint(api_snapshot, date_type=date_type)
+    if progress_callback:
+        return fetch_transactions_uncached(
+            api_snapshot.agency,
+            api_snapshot.component,
+            api_snapshot.naics,
+            api_snapshot.set_aside,
+            api_snapshot.location,
+            api_snapshot.start_date,
+            api_snapshot.end_date,
+            fingerprint,
+            progress_callback=progress_callback,
+            date_type=date_type,
+        )
+    return fetch_transactions_cached(
         api_snapshot.agency,
         api_snapshot.component,
         api_snapshot.naics,
@@ -1143,8 +1205,18 @@ def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=
         api_snapshot.location,
         api_snapshot.start_date,
         api_snapshot.end_date,
-        query_fingerprint(api_snapshot),
+        fingerprint,
+        date_type=date_type,
     )
-    if progress_callback:
-        return fetch_transactions_uncached(*args, progress_callback=progress_callback)
-    return fetch_transactions_cached(*args)
+
+
+def fetch_transactions_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
+    return _fetch_transactions_for_api_snapshot(api_snapshot_for_fetch(snapshot), progress_callback=progress_callback)
+
+
+def fetch_recent_wins_for_snapshot(snapshot: FilterSnapshot, progress_callback=None) -> tuple[pd.DataFrame, dict]:
+    return _fetch_transactions_for_api_snapshot(
+        api_snapshot_for_fetch(recent_wins_snapshot(snapshot)),
+        progress_callback=progress_callback,
+        date_type=NEW_AWARDS_DATE_TYPE,
+    )

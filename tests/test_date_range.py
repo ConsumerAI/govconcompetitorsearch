@@ -13,6 +13,13 @@ class DateRangeTests(unittest.TestCase):
         self.assertEqual(snapshot.start_date, add_calendar_years(date.today(), -6).isoformat())
         self.assertEqual(snapshot.end_date, date.today().isoformat())
 
+    def test_recent_wins_period_is_independent_twelve_month_window(self):
+        from src.state import recent_wins_period
+
+        start_date, end_date = recent_wins_period()
+        self.assertEqual(start_date, add_calendar_years(date.today(), -1).isoformat())
+        self.assertEqual(end_date, date.today().isoformat())
+
     def test_validation_rejects_inverted_future_and_too_long_ranges(self):
         self.assertEqual(_validate_date_range("2026-06-15", "2020-06-15"), "Start date must be on or before the end date.")
         self.assertEqual(_validate_date_range("2020-06-15", "9999-01-01"), "The end date cannot be in the future.")

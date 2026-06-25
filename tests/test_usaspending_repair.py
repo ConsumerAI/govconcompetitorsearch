@@ -10,7 +10,9 @@ from src.constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASID
 from src.state import FilterSnapshot, fresh_session_state
 from src.usaspending import (
     BASE_TRANSACTION_FIELDS,
+    NEW_AWARDS_DATE_TYPE,
     TRANSACTION_FIELDS,
+    base_filters,
     fetch_naics_options,
     fetch_transactions_cached,
     fiscal_year_date_range,
@@ -33,6 +35,11 @@ class PayloadRepairTests(unittest.TestCase):
         self.assertEqual(payload["filters"]["award_or_idv_flag"], "AWARD")
         self.assertEqual(payload["limit"], 100)
         self.assertEqual(payload["page"], 1)
+
+    def test_base_filters_support_new_awards_only_date_type(self):
+        snapshot = FilterSnapshot(agency="Department of State", start_date="2025-06-25", end_date="2026-06-25")
+        filters = base_filters(snapshot, date_type=NEW_AWARDS_DATE_TYPE)
+        self.assertEqual(filters["time_period"][0]["date_type"], NEW_AWARDS_DATE_TYPE)
 
     def test_fiscal_year_boundary_is_current_fy(self):
         start_date, end_date = fiscal_year_date_range()

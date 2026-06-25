@@ -294,7 +294,7 @@ class FinalAnalysisPathTests(unittest.TestCase):
     def test_final_analysis_still_uses_uncapped_segmented_downloads(self):
         calls = []
 
-        def fake_download(snapshot):
+        def fake_download(snapshot, **kwargs):
             calls.append(snapshot)
             return (
                 [

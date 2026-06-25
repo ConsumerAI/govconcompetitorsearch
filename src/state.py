@@ -21,6 +21,18 @@ def default_end_date() -> str:
     return date.today().isoformat()
 
 
+def recent_wins_start_date() -> str:
+    return add_calendar_years(date.today(), -1).isoformat()
+
+
+def recent_wins_end_date() -> str:
+    return date.today().isoformat()
+
+
+def recent_wins_period() -> tuple[str, str]:
+    return recent_wins_start_date(), recent_wins_end_date()
+
+
 @dataclass(frozen=True)
 class FilterSnapshot:
     agency: str = ""

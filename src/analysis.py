@@ -271,6 +271,63 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
     return scoped.reset_index(drop=True)
 
 
+def recent_wins_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "Rank",
+        "Contractor Name",
+        "Primary UEI",
+        "New Awards Won",
+        "Win Obligations",
+        "Share of Wins",
+        "Most Recent Win",
+    ]
+    if transactions is None or transactions.empty:
+        return pd.DataFrame(columns=columns)
+    total_net = float(pd.to_numeric(transactions["federal_action_obligation"], errors="coerce").fillna(0).sum())
+    grouped = (
+        transactions.groupby("canonical_contractor", as_index=False)
+        .agg(
+            contractor_name=("recipient_name", "first"),
+            primary_uei=("recipient_uei", _first_nonempty_text),
+            new_awards_won=("contract_award_unique_key", pd.Series.nunique),
+            win_obligations=("federal_action_obligation", "sum"),
+            most_recent_win=("action_date", "max"),
+        )
+        .sort_values(["new_awards_won", "win_obligations", "contractor_name"], ascending=[False, False, True])
+        .reset_index(drop=True)
+    )
+    grouped["Rank"] = grouped.index + 1
+    grouped["Contractor Name"] = grouped["contractor_name"]
+    grouped["Primary UEI"] = grouped["primary_uei"]
+    grouped["New Awards Won"] = grouped["new_awards_won"].astype(int)
+    grouped["Win Obligations"] = grouped["win_obligations"]
+    grouped["Share of Wins"] = grouped["win_obligations"].apply(lambda amount: amount / total_net if abs(total_net) >= 0.005 else None)
+    grouped["Most Recent Win"] = grouped["most_recent_win"]
+    positive = grouped[grouped["new_awards_won"] > 0]
+    return positive[columns]
+
+
+def analyze_recent_wins(transactions: pd.DataFrame, period: dict | None = None) -> dict:
+    leaderboard = recent_wins_leaderboard(transactions)
+    awards = award_table(transactions)
+    if not transactions.empty:
+        warm_recipient_profile_cache(
+            list(transactions["recipient_uei"].tolist()) + list(transactions["recipient_name"].tolist())
+        )
+    return {
+        "period": period or {},
+        "transactions": transactions,
+        "leaderboard": leaderboard,
+        "awards": awards,
+        "kpis": {
+            "new_awards": int(transactions["contract_award_unique_key"].nunique()) if not transactions.empty else 0,
+            "contractors": int(transactions["canonical_contractor"].nunique()) if not transactions.empty else 0,
+            "win_obligations": float(transactions["federal_action_obligation"].sum()) if not transactions.empty else 0.0,
+        },
+        "error": "",
+    }
+
+
 def competitor_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Rank",

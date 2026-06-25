@@ -7,12 +7,14 @@ import pandas as pd
 from src.agency_components import build_agency_component_options, get_agency_component_config
 from src.analysis import (
     analyze,
+    analyze_recent_wins,
     award_table,
     build_location_options,
     competitor_leaderboard,
     filter_transactions,
     market_concentration,
     normalize_transactions,
+    recent_wins_leaderboard,
 )
 from src.constants import ALL_COMPONENTS, ALL_LOCATIONS, ALL_NAICS, ALL_SET_ASIDES
 from src.state import FilterSnapshot
@@ -205,6 +207,19 @@ class FilterAndOutputTests(unittest.TestCase):
         scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
         result = analyze(scoped, FilterSnapshot())
         self.assertEqual(result["kpis"]["net_obligations"], 1400.0)
+
+    def test_recent_wins_leaderboard_counts_distinct_awards(self):
+        scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
+        leaderboard = recent_wins_leaderboard(scoped)
+        acme = leaderboard[leaderboard["Contractor Name"] == "Acme Global LLC"].iloc[0]
+        self.assertEqual(int(acme["New Awards Won"]), 1)
+        self.assertEqual(acme["Win Obligations"], 900.0)
+
+    def test_analyze_recent_wins_returns_expected_kpis(self):
+        scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
+        result = analyze_recent_wins(scoped, period={"start_date": "2025-06-25", "end_date": "2026-06-25"})
+        self.assertEqual(result["kpis"]["new_awards"], 2)
+        self.assertEqual(result["kpis"]["contractors"], 2)
 
     def test_contractor_grouping_preserves_variants(self):
         scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
