@@ -9,10 +9,13 @@ from src.analysis import (
     analyze,
     analyze_recent_wins,
     award_table,
+    award_display_description,
     build_location_options,
     competitor_leaderboard,
+    exclude_follow_on_mod_transactions,
     exclude_supply_award_transactions,
     filter_transactions,
+    is_modification_boilerplate,
     is_supply_purchase,
     market_concentration,
     normalize_transactions,
@@ -278,6 +281,91 @@ class FilterAndOutputTests(unittest.TestCase):
         )
         filtered = exclude_supply_award_transactions(rows)
         self.assertEqual(set(filtered["contract_award_unique_key"]), {"SERVICE-1"})
+
+    def test_exclude_follow_on_mod_transactions_keeps_only_new_awards(self):
+        rows = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "NEW-TO-1",
+                    "modification_number": "0",
+                    "federal_action_obligation": "1000000",
+                    "action_date": "2026-01-15",
+                    "transaction_description": "WAREHOUSE AND DISTRIBUTION OPERATIONS",
+                },
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "FOLLOW-ON-1",
+                    "modification_number": "P00001",
+                    "federal_action_obligation": "500000",
+                    "action_date": "2026-01-29",
+                    "transaction_description": "THE PURPOSE OF THIS MODIFICATION IS ADD AND OBLIGATE FUNDS.",
+                },
+            ]
+        )
+        filtered = exclude_follow_on_mod_transactions(rows)
+        self.assertEqual(set(filtered["contract_award_unique_key"]), {"NEW-TO-1"})
+
+    def test_award_display_description_prefers_base_award_text(self):
+        rows = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "AWARD-1",
+                    "modification_number": "0",
+                    "action_date": "2026-01-15",
+                    "transaction_description": "WAREHOUSE AND DISTRIBUTION OPERATIONS",
+                },
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "AWARD-1",
+                    "modification_number": "P00001",
+                    "action_date": "2026-01-29",
+                    "transaction_description": "THE PURPOSE OF THIS MODIFICATION IS ADD AND OBLIGATE FUNDS.",
+                },
+            ]
+        )
+        group = rows.groupby("contract_award_unique_key").get_group("AWARD-1")
+        self.assertEqual(award_display_description(group), "WAREHOUSE AND DISTRIBUTION OPERATIONS")
+        self.assertTrue(is_modification_boilerplate("THE PURPOSE OF THIS MODIFICATION IS ADD AND OBLIGATE FUNDS."))
+
+    def test_award_table_uses_base_description_and_signed_date(self):
+        rows = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "AWARD-1",
+                    "modification_number": "0",
+                    "action_date": "2026-01-15",
+                    "transaction_description": "WAREHOUSE AND DISTRIBUTION OPERATIONS",
+                    "federal_action_obligation": "1000000",
+                },
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SP330026F5002",
+                    "contract_award_unique_key": "AWARD-1",
+                    "modification_number": "P00001",
+                    "action_date": "2026-01-29",
+                    "transaction_description": "THE PURPOSE OF THIS MODIFICATION IS ADD AND OBLIGATE FUNDS.",
+                    "federal_action_obligation": "500000",
+                },
+            ]
+        )
+        awards = award_table(rows)
+        self.assertEqual(awards.iloc[0]["Description"], "WAREHOUSE AND DISTRIBUTION OPERATIONS")
+        self.assertEqual(str(awards.iloc[0]["Award Signed Date"]), "2026-01-15")
+        self.assertEqual(float(awards.iloc[0]["Obligations in Scope"]), 1500000.0)
 
     def test_contractor_grouping_preserves_variants(self):
         scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))

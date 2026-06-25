@@ -286,6 +286,86 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
 
 
 DLA_CATALOG_DESCRIPTION_PATTERN = re.compile(r"^\d+!C_\d")
+MOD_BOILERPLATE_MARKERS = (
+    "THE PURPOSE OF THIS MODIFICATION",
+    "PURPOSE OF THIS MODIFICATION",
+    "THIS MODIFICATION IS TO",
+    "MODIFICATION IS TO ",
+    "MODIFICATION IS ADD",
+    "MODIFICATION IS TO ADD",
+    "MODIFICATION IS TO INCREASE",
+    "MODIFICATION IS TO OBLIGATE",
+)
+
+
+def is_base_award_modification(mod_number: str) -> bool:
+    mod = clean_text(mod_number).upper()
+    if not mod or mod in {"0", "00", "000"}:
+        return True
+    if mod in {"BASE", "ORIGINAL"}:
+        return True
+    if re.fullmatch(r"P0+", mod):
+        return True
+    return False
+
+
+def is_modification_boilerplate(description: str) -> bool:
+    text = clean_text(description).upper()
+    if not text:
+        return False
+    return any(marker in text for marker in MOD_BOILERPLATE_MARKERS)
+
+
+def _award_rows_sorted(group: pd.DataFrame) -> pd.DataFrame:
+    return group.sort_values(["action_date", "row_order"], na_position="first")
+
+
+def _base_award_rows(group: pd.DataFrame) -> pd.DataFrame:
+    mask = group["modification_number"].map(is_base_award_modification)
+    return group[mask]
+
+
+def award_display_description(group: pd.DataFrame) -> str:
+    for subset in (_base_award_rows(group), _award_rows_sorted(group)):
+        if subset.empty:
+            continue
+        for desc in subset["transaction_description"].tolist():
+            cleaned = clean_text(desc)
+            if cleaned and not is_modification_boilerplate(cleaned):
+                return cleaned
+    latest = _award_rows_sorted(group).iloc[-1]
+    return clean_text(latest.get("transaction_description"))
+
+
+def award_signed_date(group: pd.DataFrame):
+    base = _base_award_rows(group)
+    source = base if not base.empty else group
+    earliest = _award_rows_sorted(source).iloc[0]
+    parsed = pd.to_datetime(earliest.get("action_date"), errors="coerce")
+    return parsed.date() if pd.notna(parsed) else None
+
+
+def new_award_keys(transactions: pd.DataFrame) -> set[str]:
+    if transactions is None or transactions.empty:
+        return set()
+    base_rows = transactions[transactions["modification_number"].map(is_base_award_modification)]
+    return set(base_rows["contract_award_unique_key"].astype(str))
+
+
+def follow_on_mod_award_keys(transactions: pd.DataFrame) -> set[str]:
+    if transactions is None or transactions.empty:
+        return set()
+    all_keys = set(transactions["contract_award_unique_key"].astype(str))
+    return all_keys - new_award_keys(transactions)
+
+
+def exclude_follow_on_mod_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
+    if transactions is None or transactions.empty:
+        return pd.DataFrame() if transactions is None else transactions.iloc[0:0].copy()
+    allowed = new_award_keys(transactions)
+    if not allowed:
+        return transactions.iloc[0:0].copy()
+    return transactions[transactions["contract_award_unique_key"].astype(str).isin(allowed)].copy()
 
 
 def is_supply_purchase(row: pd.Series | dict) -> bool:
@@ -302,7 +382,7 @@ def is_supply_purchase(row: pd.Series | dict) -> bool:
 def supply_award_keys(transactions: pd.DataFrame) -> set[str]:
     if transactions is None or transactions.empty:
         return set()
-    base_rows = transactions[transactions["modification_number"].isin(["0", ""])]
+    base_rows = transactions[transactions["modification_number"].map(is_base_award_modification)]
     if base_rows.empty:
         return set()
     supply_mask = base_rows.apply(is_supply_purchase, axis=1)
@@ -364,6 +444,8 @@ def analyze_recent_wins(
     supply_awards_excluded = 0
     if not include_supply_purchases and transactions is not None and not transactions.empty:
         supply_awards_excluded = len(supply_award_keys(transactions))
+    follow_on_awards_excluded = len(follow_on_mod_award_keys(scoped)) if not scoped.empty else 0
+    scoped = exclude_follow_on_mod_transactions(scoped)
     leaderboard = recent_wins_leaderboard(scoped)
     awards = award_table(scoped)
     if not scoped.empty:
@@ -380,6 +462,7 @@ def analyze_recent_wins(
             "contractors": int(scoped["canonical_contractor"].nunique()) if not scoped.empty else 0,
             "win_obligations": float(scoped["federal_action_obligation"].sum()) if not scoped.empty else 0.0,
             "supply_awards_excluded": supply_awards_excluded,
+            "follow_on_awards_excluded": follow_on_awards_excluded,
         },
         "include_supply_purchases": include_supply_purchases,
         "error": "",
@@ -479,17 +562,16 @@ def award_table(transactions: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=columns)
     rows = []
     for award_key, group in transactions.groupby("contract_award_unique_key", dropna=False):
-        latest = group.sort_values(["action_date", "row_order"], na_position="first").iloc[-1]
+        latest = _award_rows_sorted(group).iloc[-1]
         contractor_name = latest["recipient_name"]
         contractor_uei = _first_nonempty_text(group["recipient_uei"])
-        signed_date = pd.to_datetime(latest["action_date"], errors="coerce")
         rows.append(
             {
                 "Contractor": contractor_name,
                 "Recipient UEI": contractor_uei,
                 "Award ID": latest["award_id_piid"],
-                "Description": latest["transaction_description"],
-                "Award Signed Date": signed_date.date() if pd.notna(signed_date) else None,
+                "Description": award_display_description(group),
+                "Award Signed Date": award_signed_date(group),
                 "Obligations in Scope": float(group["federal_action_obligation"].sum()),
                 "Current Award Value": float(latest["current_total_value_of_award"]),
                 "Award Ceiling": float(latest["potential_total_value_of_award"]),

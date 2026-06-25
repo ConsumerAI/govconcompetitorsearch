@@ -970,6 +970,9 @@ def render_recent_wins_kpis(recent_wins: dict) -> None:
     awards_subtext = "Distinct new service awards in the last 12 months"
     if products_excluded:
         awards_subtext = f"{awards_subtext}; {products_excluded:,} product-only awards excluded"
+    follow_on_excluded = int(kpis.get("follow_on_awards_excluded") or 0)
+    if follow_on_excluded:
+        awards_subtext = f"{awards_subtext}; {follow_on_excluded:,} follow-on mods on older awards excluded"
     st.markdown('<div class="metric-grid">', unsafe_allow_html=True)
     cols = st.columns(3)
     with cols[0]:
@@ -994,6 +997,8 @@ def render_recent_wins_section(recent_wins: dict) -> None:
             f"through {_date_label(end_date, long=True)}. Includes new service contracts, task orders, "
             f"and delivery orders. Excludes follow-on funding on older awards and product-only purchases "
             f"(federal product/service codes with numeric PSCs, such as equipment, parts, and commodities). "
+            f"Each row is a distinct award or task order; similar Award IDs often share a parent contract vehicle. "
+            f"Descriptions and signed dates come from the original award action, not later funding modifications. "
             f"Click an Award ID to open the contract in USAspending and verify details."
         )
     if recent_wins.get("error"):
