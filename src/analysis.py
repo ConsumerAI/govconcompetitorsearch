@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 import pandas as pd
@@ -157,6 +158,19 @@ def normalize_transactions(rows: list[dict], default_agency: str = "") -> pd.Dat
                 "awarding_office_name": awarding_name,
                 "naics_code": naics_code or clean_text(_field(row, ["naics_code", "NAICS Code", "naics"])),
                 "naics_description": naics_description or clean_text(_field(row, ["naics_description", "NAICS Description", "naics_desc"])),
+                "product_or_service_code": clean_text(
+                    _field(row, ["product_or_service_code", "Product or Service Code", "psc_code", "PSC"])
+                ),
+                "product_or_service_code_description": clean_text(
+                    _field(
+                        row,
+                        [
+                            "product_or_service_code_description",
+                            "Product or Service Code Description",
+                            "psc_description",
+                        ],
+                    )
+                ),
                 "set_aside_type": normalize_set_aside_code(
                     _field(row, ["set_aside_type", "set_aside_type_code", "type_of_set_aside", "Set-Aside Type"])
                 ),
@@ -271,12 +285,45 @@ def filter_transactions(transactions: pd.DataFrame, snapshot: FilterSnapshot) ->
     return scoped.reset_index(drop=True)
 
 
+DLA_CATALOG_DESCRIPTION_PATTERN = re.compile(r"^\d+!C_\d")
+
+
+def is_supply_purchase(row: pd.Series | dict) -> bool:
+    """Return True when the award is a federal product/supply buy (numeric PSC)."""
+    if isinstance(row, dict):
+        row = pd.Series(row)
+    psc = clean_text(row.get("product_or_service_code"))
+    if psc and psc[0].isdigit():
+        return True
+    description = clean_text(row.get("transaction_description"))
+    return bool(DLA_CATALOG_DESCRIPTION_PATTERN.match(description))
+
+
+def supply_award_keys(transactions: pd.DataFrame) -> set[str]:
+    if transactions is None or transactions.empty:
+        return set()
+    base_rows = transactions[transactions["modification_number"].isin(["0", ""])]
+    if base_rows.empty:
+        return set()
+    supply_mask = base_rows.apply(is_supply_purchase, axis=1)
+    return set(base_rows.loc[supply_mask, "contract_award_unique_key"].astype(str))
+
+
+def exclude_supply_award_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
+    if transactions is None or transactions.empty:
+        return pd.DataFrame() if transactions is None else transactions.iloc[0:0].copy()
+    excluded = supply_award_keys(transactions)
+    if not excluded:
+        return transactions.copy()
+    return transactions[~transactions["contract_award_unique_key"].astype(str).isin(excluded)].copy()
+
+
 def recent_wins_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Rank",
         "Contractor Name",
         "Primary UEI",
-        "New Awards Won",
+        "New Service Awards",
         "Win Obligations",
         "Share of Wins",
         "Most Recent Win",
@@ -293,13 +340,13 @@ def recent_wins_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
             win_obligations=("federal_action_obligation", "sum"),
             most_recent_win=("action_date", "max"),
         )
-        .sort_values(["new_awards_won", "win_obligations", "contractor_name"], ascending=[False, False, True])
+        .sort_values(["win_obligations", "new_awards_won", "contractor_name"], ascending=[False, False, True])
         .reset_index(drop=True)
     )
     grouped["Rank"] = grouped.index + 1
     grouped["Contractor Name"] = grouped["contractor_name"]
     grouped["Primary UEI"] = grouped["primary_uei"]
-    grouped["New Awards Won"] = grouped["new_awards_won"].astype(int)
+    grouped["New Service Awards"] = grouped["new_awards_won"].astype(int)
     grouped["Win Obligations"] = grouped["win_obligations"]
     grouped["Share of Wins"] = grouped["win_obligations"].apply(lambda amount: amount / total_net if abs(total_net) >= 0.005 else None)
     grouped["Most Recent Win"] = grouped["most_recent_win"]
@@ -307,12 +354,21 @@ def recent_wins_leaderboard(transactions: pd.DataFrame) -> pd.DataFrame:
     return positive[columns]
 
 
-def analyze_recent_wins(transactions: pd.DataFrame, period: dict | None = None) -> dict:
-    leaderboard = recent_wins_leaderboard(transactions)
-    awards = award_table(transactions)
-    if not transactions.empty:
+def analyze_recent_wins(
+    transactions: pd.DataFrame,
+    period: dict | None = None,
+    *,
+    include_supply_purchases: bool = False,
+) -> dict:
+    scoped = transactions if include_supply_purchases else exclude_supply_award_transactions(transactions)
+    supply_awards_excluded = 0
+    if not include_supply_purchases and transactions is not None and not transactions.empty:
+        supply_awards_excluded = len(supply_award_keys(transactions))
+    leaderboard = recent_wins_leaderboard(scoped)
+    awards = award_table(scoped)
+    if not scoped.empty:
         warm_recipient_profile_cache(
-            list(transactions["recipient_uei"].tolist()) + list(transactions["recipient_name"].tolist())
+            list(scoped["recipient_uei"].tolist()) + list(scoped["recipient_name"].tolist())
         )
     return {
         "period": period or {},
@@ -320,10 +376,12 @@ def analyze_recent_wins(transactions: pd.DataFrame, period: dict | None = None) 
         "leaderboard": leaderboard,
         "awards": awards,
         "kpis": {
-            "new_awards": int(transactions["contract_award_unique_key"].nunique()) if not transactions.empty else 0,
-            "contractors": int(transactions["canonical_contractor"].nunique()) if not transactions.empty else 0,
-            "win_obligations": float(transactions["federal_action_obligation"].sum()) if not transactions.empty else 0.0,
+            "new_awards": int(scoped["contract_award_unique_key"].nunique()) if not scoped.empty else 0,
+            "contractors": int(scoped["canonical_contractor"].nunique()) if not scoped.empty else 0,
+            "win_obligations": float(scoped["federal_action_obligation"].sum()) if not scoped.empty else 0.0,
+            "supply_awards_excluded": supply_awards_excluded,
         },
+        "include_supply_purchases": include_supply_purchases,
         "error": "",
     }
 

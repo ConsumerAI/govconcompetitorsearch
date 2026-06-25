@@ -11,7 +11,9 @@ from src.analysis import (
     award_table,
     build_location_options,
     competitor_leaderboard,
+    exclude_supply_award_transactions,
     filter_transactions,
+    is_supply_purchase,
     market_concentration,
     normalize_transactions,
     recent_wins_leaderboard,
@@ -212,7 +214,7 @@ class FilterAndOutputTests(unittest.TestCase):
         scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))
         leaderboard = recent_wins_leaderboard(scoped)
         acme = leaderboard[leaderboard["Contractor Name"] == "Acme Global LLC"].iloc[0]
-        self.assertEqual(int(acme["New Awards Won"]), 1)
+        self.assertEqual(int(acme["New Service Awards"]), 1)
         self.assertEqual(acme["Win Obligations"], 900.0)
 
     def test_analyze_recent_wins_returns_expected_kpis(self):
@@ -220,6 +222,62 @@ class FilterAndOutputTests(unittest.TestCase):
         result = analyze_recent_wins(scoped, period={"start_date": "2025-06-25", "end_date": "2026-06-25"})
         self.assertEqual(result["kpis"]["new_awards"], 2)
         self.assertEqual(result["kpis"]["contractors"], 2)
+
+    def test_supply_purchase_detection(self):
+        self.assertTrue(
+            is_supply_purchase(
+                {
+                    "product_or_service_code": "2320",
+                    "transaction_description": "4569335291!C_5 NUT,PLAIN,ROUND",
+                }
+            )
+        )
+        self.assertTrue(
+            is_supply_purchase(
+                {
+                    "product_or_service_code": "",
+                    "transaction_description": "4569335291!C_5 NUT,PLAIN,ROUND",
+                }
+            )
+        )
+        self.assertFalse(
+            is_supply_purchase(
+                {
+                    "product_or_service_code": "S215",
+                    "transaction_description": "TASK ORDER IN SUPPORT OF WAREHOUSE AND DISTRIBUTION SERVICES.",
+                }
+            )
+        )
+
+    def test_exclude_supply_award_transactions_removes_catalog_awards(self):
+        rows = normalize_transactions(
+            [
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "ASRC FEDERAL FACILITIES LOGISTICS, LLC",
+                    "award_id_piid": "PO-1",
+                    "contract_award_unique_key": "SUPPLY-1",
+                    "modification_number": "0",
+                    "federal_action_obligation": "1000",
+                    "action_date": "2025-01-01",
+                    "transaction_description": "4569335291!C_5 NUT,PLAIN,ROUND",
+                    "product_or_service_code": "2320",
+                },
+                {
+                    "awarding_agency_name": "Department of Defense",
+                    "recipient_name": "AMENTUM SERVICES, INC.",
+                    "award_id_piid": "SVC-1",
+                    "contract_award_unique_key": "SERVICE-1",
+                    "modification_number": "0",
+                    "federal_action_obligation": "5000000",
+                    "action_date": "2025-02-01",
+                    "transaction_description": "WAREHOUSING AND DISTRIBUTION OPERATIONS",
+                    "product_or_service_code": "S215",
+                },
+            ]
+        )
+        filtered = exclude_supply_award_transactions(rows)
+        self.assertEqual(set(filtered["contract_award_unique_key"]), {"SERVICE-1"})
 
     def test_contractor_grouping_preserves_variants(self):
         scoped = filter_transactions(sample_transactions(), FilterSnapshot(agency="Department of State"))

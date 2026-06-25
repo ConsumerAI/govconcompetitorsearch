@@ -823,7 +823,7 @@ def _fetch_analysis_datasets(
     progress_callback=None,
 ) -> tuple[pd.DataFrame, dict, pd.DataFrame, dict]:
     if progress_callback:
-        progress_callback("Loading recent contract wins and competitor activity...")
+        progress_callback("Loading recent service wins and competitor activity...")
     with ThreadPoolExecutor(max_workers=2) as pool:
         activity_future = pool.submit(fetch_transactions_for_snapshot, pending)
         wins_future = pool.submit(fetch_recent_wins_for_snapshot, pending)
@@ -853,81 +853,148 @@ def _build_analysis_results(
         }
     else:
         wins_scoped = filter_transactions(wins_transactions, pending)
-        results["recent_wins"] = analyze_recent_wins(wins_scoped, period=wins_diagnostic.get("period", {}))
+        results["recent_wins"] = {
+            "transactions": wins_scoped,
+            "period": wins_diagnostic.get("period", {}),
+            "error": "",
+        }
     return results
+
+
+def _contractor_link_markup(name: str, *, uei: str = "") -> str:
+    contractor = html.escape(name)
+    link = usaspending_recipient_profile_url(uei, name)
+    if not link:
+        return contractor
+    return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
+
+
+def _dataframe_height(row_count: int) -> int:
+    return min(28 * 16, max(220, 38 + row_count * 35))
+
+
+def _profile_link_column(display_text: str = "Contractor Name") -> st.column_config.LinkColumn:
+    return st.column_config.LinkColumn(display_text, display_text=display_text)
+
+
+def _leaderboard_column_config(*, money_label: str, share_label: str, awards_label: str, recent_label: str) -> dict:
+    return {
+        "Rank": st.column_config.NumberColumn("Rank", format="%d"),
+        "Contractor Name": None,
+        "Profile Link": _profile_link_column(),
+        money_label: st.column_config.NumberColumn(money_label, format="$%.2f"),
+        share_label: st.column_config.NumberColumn(share_label, format="%.1f%%"),
+        awards_label: st.column_config.NumberColumn(awards_label, format="%d"),
+        recent_label: st.column_config.DateColumn(recent_label, format="YYYY-MM-DD"),
+    }
+
+
+def _prepare_leaderboard_display(leaderboard: pd.DataFrame) -> pd.DataFrame:
+    display = leaderboard.copy()
+    if "Market Share" in display.columns:
+        display["Market Share"] = pd.to_numeric(display["Market Share"], errors="coerce") * 100
+    if "Share of Wins" in display.columns:
+        display["Share of Wins"] = pd.to_numeric(display["Share of Wins"], errors="coerce") * 100
+    display["Profile Link"] = display.apply(
+        lambda row: usaspending_recipient_profile_url(str(row.get("Primary UEI") or ""), str(row.get("Contractor Name") or "")) or "",
+        axis=1,
+    )
+    return display
+
+
+def _render_sortable_leaderboard(
+    leaderboard: pd.DataFrame,
+    *,
+    table_key: str,
+    money_column: str,
+    share_column: str,
+    awards_column: str,
+    recent_column: str,
+) -> None:
+    if leaderboard.empty:
+        return
+    display = _prepare_leaderboard_display(leaderboard)
+    columns = ["Rank", "Contractor Name", "Profile Link", money_column, share_column, awards_column, recent_column]
+    column_config = _leaderboard_column_config(
+        money_label=money_column,
+        share_label=share_column,
+        awards_label=awards_column,
+        recent_label=recent_column,
+    )
+    st.caption("Click a column header to sort.")
+    st.dataframe(
+        display[columns],
+        column_config=column_config,
+        hide_index=True,
+        use_container_width=True,
+        height=_dataframe_height(len(display)),
+        key=table_key,
+    )
 
 
 def render_recent_wins_kpis(recent_wins: dict) -> None:
     kpis = recent_wins.get("kpis") or {}
+    products_excluded = int(kpis.get("supply_awards_excluded") or 0)
+    awards_subtext = "Distinct new service awards in the last 12 months"
+    if products_excluded:
+        awards_subtext = f"{awards_subtext}; {products_excluded:,} product-only awards excluded"
     st.markdown('<div class="metric-grid">', unsafe_allow_html=True)
     cols = st.columns(3)
     with cols[0]:
-        metric_card("New Awards Won", f"{int(kpis.get('new_awards', 0)):,}", "Distinct awards signed in the last 12 months", "#22d3ee")
+        metric_card("New Service Awards", f"{int(kpis.get('new_awards', 0)):,}", awards_subtext, "#22d3ee")
     with cols[1]:
-        metric_card("Winning Contractors", f"{int(kpis.get('contractors', 0)):,}", "Contractors with at least one new award", "#34d399")
+        metric_card("Winning Contractors", f"{int(kpis.get('contractors', 0)):,}", "Contractors with at least one new service award", "#34d399")
     with cols[2]:
-        metric_card("Win Obligations", format_money(kpis.get("win_obligations", 0.0)), "Obligations on new awards in scope", "#a78bfa")
+        metric_card("Win Obligations", format_money(kpis.get("win_obligations", 0.0)), "Obligations on new service awards in scope", "#a78bfa")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
     if leaderboard.empty:
-        st.info("No new awards found for this scope in the last 12 months.")
+        st.info("No new service awards found for this scope in the last 12 months.")
         return
     if len(leaderboard) > 15:
-        st.caption(f"Showing all {len(leaderboard):,} winning contractors. Scroll the table for more.")
-    rows = []
-    for row in leaderboard.to_dict("records"):
-        name = str(row.get("Contractor Name") or "")
-        contractor_uei = str(row.get("Primary UEI") or "")
-        new_awards = int(row.get("New Awards Won") or 0)
-        obligations = format_full_money(row.get("Win Obligations"))
-        share = format_percent(row.get("Share of Wins"))
-        recent = row.get("Most Recent Win")
-        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
-            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
-            f"<td>{new_awards:,}</td>"
-            f"<td>{html.escape(obligations)}</td>"
-            f"<td>{html.escape(share)}</td>"
-            f"<td>{html.escape(recent_text)}</td>"
-            "</tr>"
-        )
-    st.markdown(
-        """
-        <div class="competitor-table-wrap">
-          <table class="competitor-table">
-            <thead><tr><th>Rank</th><th>Contractor Name</th><th>New Awards Won</th><th>Win Obligations</th><th>Share of Wins</th><th>Most Recent Win</th></tr></thead>
-            <tbody>"""
-        + "".join(rows)
-        + """</tbody>
-          </table>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        st.caption(f"Showing all {len(leaderboard):,} winning contractors.")
+    _render_sortable_leaderboard(
+        leaderboard,
+        table_key="recent-wins-leaderboard",
+        money_column="Win Obligations",
+        share_column="Share of Wins",
+        awards_column="New Service Awards",
+        recent_column="Most Recent Win",
     )
 
 
 def render_recent_wins_section(recent_wins: dict) -> None:
     if not recent_wins:
         return
-    st.markdown('<div class="section-title">Recent Contract Wins</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Recent Service Wins</div>', unsafe_allow_html=True)
     period = recent_wins.get("period") or {}
     start_date = period.get("start_date")
     end_date = period.get("end_date")
     if start_date and end_date:
         st.caption(
-            f"Who is winning work now: new awards signed from {_date_label(start_date, long=True)} "
-            f"through {_date_label(end_date, long=True)}. Includes new contracts and task orders; "
-            f"excludes follow-on funding on older awards."
+            f"Services only: who is winning new work signed from {_date_label(start_date, long=True)} "
+            f"through {_date_label(end_date, long=True)}. Includes new service contracts, task orders, "
+            f"and delivery orders. Excludes follow-on funding on older awards and product-only purchases "
+            f"(federal product/service codes with numeric PSCs, such as equipment, parts, and commodities)."
         )
     if recent_wins.get("error"):
-        st.warning("Recent contract wins could not be loaded. Obligation activity results are still shown below.")
+        st.warning("Recent service wins could not be loaded. Obligation activity results are still shown below.")
         return
-    render_recent_wins_kpis(recent_wins)
-    render_recent_wins_leaderboard(recent_wins.get("leaderboard", pd.DataFrame()))
+    include_supply = st.checkbox(
+        "Include product and supply purchases",
+        value=False,
+        key="recent_wins_include_supply",
+        help="Show product-only awards identified by numeric federal PSC codes. Off by default so this view stays services-focused.",
+    )
+    display = analyze_recent_wins(
+        recent_wins.get("transactions", pd.DataFrame()),
+        period=period,
+        include_supply_purchases=include_supply,
+    )
+    render_recent_wins_kpis(display)
+    render_recent_wins_leaderboard(display.get("leaderboard", pd.DataFrame()))
 
 
 def _chip_removal_target(chip_id: str, analyzed: FilterSnapshot) -> tuple[FilterSnapshot | None, dict[str, object]]:
@@ -1060,50 +1127,20 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
                         st.error("Unable to load the complete selected date range. No new analysis was applied.")
 
 
-def _contractor_link_markup(name: str, *, uei: str = "") -> str:
-    contractor = html.escape(name)
-    link = usaspending_recipient_profile_url(uei, name)
-    if not link:
-        return contractor
-    return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
-
-
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
     st.markdown('<div class="section-title">Top Competitors by Obligations</div>', unsafe_allow_html=True)
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
         return
     if len(leaderboard) > 15:
-        st.caption(f"Showing all {len(leaderboard):,} contractors. Scroll the table for more.")
-    rows = []
-    for row in leaderboard.to_dict("records"):
-        name = str(row.get("Contractor Name") or "")
-        contractor_uei = str(row.get("Primary UEI") or "")
-        obligations = format_full_money(row.get("Obligations in Scope"))
-        share = format_percent(row.get("Market Share"))
-        unique_awards = int(row.get("Unique Awards") or 0)
-        recent = row.get("Most Recent Action Date")
-        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
-            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
-            f"<td>{html.escape(obligations)}</td>"
-            f"<td>{html.escape(share)}</td>"
-            f"<td>{unique_awards:,}</td>"
-            f"<td>{html.escape(recent_text)}</td>"
-            "</tr>"
-        )
-    st.markdown(
-        """
-        <div class="competitor-table-wrap">
-          <table class="competitor-table">
-            <thead><tr><th>Rank</th><th>Contractor Name</th><th>Obligations in Scope</th><th>Market Share</th><th>Unique Awards</th><th>Most Recent Action Date</th></tr></thead>
-            <tbody>
-        """
-        + "".join(rows)
-        + "</tbody></table></div>",
-        unsafe_allow_html=True,
+        st.caption(f"Showing all {len(leaderboard):,} contractors.")
+    _render_sortable_leaderboard(
+        leaderboard,
+        table_key="obligation-leaderboard",
+        money_column="Obligations in Scope",
+        share_column="Market Share",
+        awards_column="Unique Awards",
+        recent_column="Most Recent Action Date",
     )
 
 
@@ -1208,37 +1245,42 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"awards-export-xlsx-{file_suffix}",
         )
-    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
-    rows = []
-    for row in visible.to_dict("records"):
-        award_link = row.get("USAspending Award Link") or ""
-        award = html.escape(str(row.get("Award ID") or "Unavailable"))
-        award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
-        contractor_markup = _contractor_link_markup(
-            str(row.get("Contractor") or ""),
-            uei=str(row.get("Recipient UEI") or ""),
-        )
-        rows.append(
-            "<tr>"
-            f"<td>{contractor_markup}</td>"
-            f"<td>{award_markup}</td>"
-            f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
-            f"<td>{html.escape(format_full_money(row.get('Obligations in Scope')))}</td>"
-            f"<td>{html.escape(str(row.get('Performance Location') or ''))}</td>"
-            f"<td>{html.escape(str(row.get('Awarding Office') or ''))}</td>"
-            f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
-            "</tr>"
-        )
-    st.markdown(
-        f"""
-        <div class="{scroll_class}">
-          <table class="award-drilldown-table">
-            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Obligations in Scope</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
-            <tbody>
-        """
-        + "".join(rows)
-        + "</tbody></table></div>",
-        unsafe_allow_html=True,
+    display = visible.copy()
+    display["Profile Link"] = display.apply(
+        lambda row: usaspending_recipient_profile_url(str(row.get("Recipient UEI") or ""), str(row.get("Contractor") or "")) or "",
+        axis=1,
+    )
+    display["Award Link"] = display["USAspending Award Link"].fillna("").astype(str)
+    st.caption("Click a column header to sort.")
+    st.dataframe(
+        display[
+            [
+                "Contractor",
+                "Profile Link",
+                "Award ID",
+                "Award Link",
+                "Description",
+                "Obligations in Scope",
+                "Performance Location",
+                "Awarding Office",
+                "Funding Office",
+            ]
+        ],
+        column_config={
+            "Contractor": None,
+            "Profile Link": _profile_link_column("Contractor"),
+            "Award ID": None,
+            "Award Link": st.column_config.LinkColumn("Award ID", display_text="Award ID"),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+            "Obligations in Scope": st.column_config.NumberColumn("Obligations in Scope", format="$%.2f"),
+            "Performance Location": None,
+            "Awarding Office": None,
+            "Funding Office": None,
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=_dataframe_height(len(display)),
+        key=f"awards-table-{file_suffix}",
     )
 
 

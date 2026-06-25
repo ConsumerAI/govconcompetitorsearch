@@ -856,7 +856,7 @@ def recent_wins_snapshot(snapshot: FilterSnapshot) -> FilterSnapshot:
 def recent_wins_period_metadata(snapshot: FilterSnapshot | None = None) -> dict:
     metadata = period_metadata(snapshot)
     metadata["date_type"] = NEW_AWARDS_DATE_TYPE
-    metadata["ytd_cutoff_logic"] = "rolling twelve-month new awards only"
+    metadata["ytd_cutoff_logic"] = "rolling twelve-month new service awards only"
     return metadata
 
 
@@ -1031,7 +1031,7 @@ def fetch_transactions_uncached(
     payloads = []
     segment_diagnostics = []
     period = recent_wins_period_metadata(snapshot) if date_type == NEW_AWARDS_DATE_TYPE else period_metadata(snapshot)
-    loading_label = "recent contract wins" if date_type == NEW_AWARDS_DATE_TYPE else "competitor data"
+    loading_label = "recent service wins" if date_type == NEW_AWARDS_DATE_TYPE else "competitor data"
     for index, segment in enumerate(segments, start=1):
         if progress_callback:
             progress_callback(f"Loading {loading_label}: {index} of {len(segments)} periods")
