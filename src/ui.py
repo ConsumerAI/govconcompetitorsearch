@@ -873,16 +873,30 @@ def _dataframe_height(row_count: int) -> int:
     return min(28 * 16, max(220, 38 + row_count * 35))
 
 
-def _profile_link_column(display_text: str = "Contractor Name") -> st.column_config.LinkColumn:
-    return st.column_config.LinkColumn(display_text, display_text=display_text)
+MONEY_TABLE_FORMAT = "$%,.2f"
+
+
+def _profile_link_column(display_text: str = "Contractor Name", *, label: str | None = None) -> st.column_config.LinkColumn:
+    return st.column_config.LinkColumn(
+        "Profile Link",
+        label=label or display_text,
+        display_text=display_text,
+    )
+
+
+def _award_link_column(display_text: str = "Award ID", *, label: str | None = None) -> st.column_config.LinkColumn:
+    return st.column_config.LinkColumn(
+        "Award Link",
+        label=label or display_text,
+        display_text=display_text,
+    )
 
 
 def _leaderboard_column_config(*, money_label: str, share_label: str, awards_label: str, recent_label: str) -> dict:
     return {
         "Rank": st.column_config.NumberColumn("Rank", format="%d"),
-        "Contractor Name": None,
         "Profile Link": _profile_link_column(),
-        money_label: st.column_config.NumberColumn(money_label, format="$%.2f"),
+        money_label: st.column_config.NumberColumn(money_label, format=MONEY_TABLE_FORMAT),
         share_label: st.column_config.NumberColumn(share_label, format="%.1f%%"),
         awards_label: st.column_config.NumberColumn(awards_label, format="%d"),
         recent_label: st.column_config.DateColumn(recent_label, format="YYYY-MM-DD"),
@@ -914,7 +928,7 @@ def _render_sortable_leaderboard(
     if leaderboard.empty:
         return
     display = _prepare_leaderboard_display(leaderboard)
-    columns = ["Rank", "Contractor Name", "Profile Link", money_column, share_column, awards_column, recent_column]
+    visible_columns = ["Rank", "Profile Link", money_column, share_column, awards_column, recent_column]
     column_config = _leaderboard_column_config(
         money_label=money_column,
         share_label=share_column,
@@ -923,7 +937,8 @@ def _render_sortable_leaderboard(
     )
     st.caption("Click a column header to sort.")
     st.dataframe(
-        display[columns],
+        display,
+        column_order=visible_columns,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
@@ -1251,28 +1266,24 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         axis=1,
     )
     display["Award Link"] = display["USAspending Award Link"].fillna("").astype(str)
+    visible_columns = [
+        "Profile Link",
+        "Award Link",
+        "Description",
+        "Obligations in Scope",
+        "Performance Location",
+        "Awarding Office",
+        "Funding Office",
+    ]
     st.caption("Click a column header to sort.")
     st.dataframe(
-        display[
-            [
-                "Contractor",
-                "Profile Link",
-                "Award ID",
-                "Award Link",
-                "Description",
-                "Obligations in Scope",
-                "Performance Location",
-                "Awarding Office",
-                "Funding Office",
-            ]
-        ],
+        display,
+        column_order=visible_columns,
         column_config={
-            "Contractor": None,
             "Profile Link": _profile_link_column("Contractor"),
-            "Award ID": None,
-            "Award Link": st.column_config.LinkColumn("Award ID", display_text="Award ID"),
+            "Award Link": _award_link_column("Award ID"),
             "Description": st.column_config.TextColumn("Description", width="large"),
-            "Obligations in Scope": st.column_config.NumberColumn("Obligations in Scope", format="$%.2f"),
+            "Obligations in Scope": st.column_config.NumberColumn("Obligations in Scope", format=MONEY_TABLE_FORMAT),
             "Performance Location": None,
             "Awarding Office": None,
             "Funding Office": None,
