@@ -878,16 +878,14 @@ MONEY_TABLE_FORMAT = "$%,.2f"
 
 def _profile_link_column(display_text: str = "Contractor Name", *, label: str | None = None) -> st.column_config.LinkColumn:
     return st.column_config.LinkColumn(
-        "Profile Link",
-        label=label or display_text,
+        label or display_text,
         display_text=display_text,
     )
 
 
 def _award_link_column(display_text: str = "Award ID", *, label: str | None = None) -> st.column_config.LinkColumn:
     return st.column_config.LinkColumn(
-        "Award Link",
-        label=label or display_text,
+        label or display_text,
         display_text=display_text,
     )
 
