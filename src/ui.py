@@ -369,6 +369,26 @@ def _widget_value(key: str, fallback: str = "") -> str:
     return value or ""
 
 
+def _defer_widget_updates(**updates) -> None:
+    deferred = st.session_state.setdefault("deferred_widget_updates", {})
+    deferred.update(updates)
+
+
+def _apply_deferred_widget_updates() -> None:
+    deferred = getattr(st.session_state, "deferred_widget_updates", None)
+    if not deferred:
+        return
+    try:
+        del st.session_state["deferred_widget_updates"]
+    except (KeyError, TypeError):
+        try:
+            del st.session_state.deferred_widget_updates
+        except AttributeError:
+            pass
+    for key, value in deferred.items():
+        st.session_state[key] = value
+
+
 def _guide_suppressed(snapshot: FilterSnapshot) -> bool:
     analyzed = st.session_state.analyzed_snapshot
     results = st.session_state.analysis_results
@@ -546,6 +566,7 @@ def _option_diagnostic_errors(diagnostics: dict) -> dict:
 
 
 def render_filters() -> tuple[FilterSnapshot, bool, dict, str, str]:
+    _apply_deferred_widget_updates()
     try:
         validate_index()
     except OptionIndexError as exc:
@@ -805,11 +826,16 @@ def _requires_download(previous: FilterSnapshot, pending: FilterSnapshot) -> boo
 
 def _snapshot_after_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> FilterSnapshot | None:
     if chip_id == "agency":
-        st.session_state[AGENCY_WIDGET_KEY] = ""
-        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
-        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
-        st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
-        st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+        st.session_state.pending_snapshot = FilterSnapshot()
+        _defer_widget_updates(
+            **{
+                AGENCY_WIDGET_KEY: "",
+                COMPONENT_WIDGET_KEY: ALL_COMPONENTS,
+                NAICS_WIDGET_KEY: ALL_NAICS,
+                SET_ASIDE_WIDGET_KEY: ALL_SET_ASIDES,
+                LOCATION_WIDGET_KEY: ALL_LOCATIONS,
+            }
+        )
         return None
     pending = FilterSnapshot(
         agency=analyzed.agency,
@@ -820,17 +846,20 @@ def _snapshot_after_chip_removal(chip_id: str, analyzed: FilterSnapshot) -> Filt
         start_date=default_start_date() if chip_id == "period" else analyzed.start_date,
         end_date=default_end_date() if chip_id == "period" else analyzed.end_date,
     )
+    widget_updates: dict[str, object] = {}
     if chip_id == "component":
-        st.session_state[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
+        widget_updates[COMPONENT_WIDGET_KEY] = ALL_COMPONENTS
     elif chip_id == "naics":
-        st.session_state[NAICS_WIDGET_KEY] = ALL_NAICS
+        widget_updates[NAICS_WIDGET_KEY] = ALL_NAICS
     elif chip_id == "set_aside":
-        st.session_state[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
+        widget_updates[SET_ASIDE_WIDGET_KEY] = ALL_SET_ASIDES
     elif chip_id == "location":
-        st.session_state[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
+        widget_updates[LOCATION_WIDGET_KEY] = ALL_LOCATIONS
     elif chip_id == "period":
-        st.session_state.date_from = _parse_snapshot_date(pending.start_date)
-        st.session_state.date_through = _parse_snapshot_date(pending.end_date)
+        widget_updates["date_from"] = _parse_snapshot_date(pending.start_date)
+        widget_updates["date_through"] = _parse_snapshot_date(pending.end_date)
+    if widget_updates:
+        _defer_widget_updates(**widget_updates)
     st.session_state.pending_snapshot = pending
     return pending
 
