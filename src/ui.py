@@ -4,6 +4,7 @@ import html
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
@@ -249,6 +250,67 @@ def styles() -> None:
         .award-drilldown-table, .competitor-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
         .award-drilldown-table th, .competitor-table th {
             text-align: left; color: #dbeafe; background: rgba(15,23,42,.96); padding: .65rem .7rem; border-bottom: 1px solid var(--border);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.results-panel-recent-wins) {
+            background: linear-gradient(180deg, rgba(8, 47, 73, 0.34), rgba(8, 13, 24, 0.12));
+            padding: 1rem 1.1rem 1.2rem;
+            margin: 0 0 1.35rem;
+            border-color: rgba(34, 211, 238, 0.24) !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.results-panel-obligation-activity) {
+            background: linear-gradient(180deg, rgba(49, 46, 129, 0.28), rgba(8, 13, 24, 0.1));
+            padding: 1rem 1.1rem 1.2rem;
+            border-color: rgba(167, 139, 250, 0.22) !important;
+        }
+        .results-panel-marker { display: none; }
+        .results-panel-title { color: var(--text); font-size: 1.12rem; font-weight: 850; margin: 0 0 .35rem; }
+        .results-panel-subtitle { color: var(--muted); font-size: .88rem; margin: 0 0 .95rem; line-height: 1.45; }
+        .sortable-table-bundle-marker { display: none; }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) {
+            gap: 0 !important;
+            margin: 0 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) > div[data-testid="column"] {
+            padding: 0 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button {
+            width: 100% !important;
+            border-radius: 0 !important;
+            border: none !important;
+            border-bottom: 1px solid var(--border) !important;
+            border-right: 1px solid rgba(148, 163, 184, 0.12) !important;
+            background: rgba(15, 23, 42, 0.96) !important;
+            color: #dbeafe !important;
+            font-size: .82rem !important;
+            font-weight: 750 !important;
+            text-align: left !important;
+            padding: .65rem .7rem !important;
+            min-height: unset !important;
+            box-shadow: none !important;
+            white-space: normal !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot):last-child [data-testid="stButton"] > button {
+            border-right: none !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button:hover {
+            background: rgba(30, 41, 59, 1) !important;
+            color: #f8fafc !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button[kind="primary"] {
+            background: rgba(30, 58, 138, 0.72) !important;
+            color: #f8fafc !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) .award-drilldown-table-wrap,
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) .competitor-table-wrap {
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            margin-top: 0;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) div[data-testid="column"]:first-child [data-testid="stButton"] > button {
+            border-radius: 8px 0 0 0 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) div[data-testid="column"]:last-child [data-testid="stButton"] > button {
+            border-radius: 0 8px 0 0 !important;
         }
         .award-drilldown-table td, .competitor-table td { color: #e5edf8; padding: .58rem .7rem; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
         .award-drilldown-table tr:nth-child(even) td, .competitor-table tr:nth-child(even) td { background: rgba(15,23,42,.42); }
@@ -893,6 +955,58 @@ def _sort_table(
     return frame.sort_values(sort_by, ascending=ascending, na_position="last").reset_index(drop=True)
 
 
+@dataclass(frozen=True)
+class SortableColumn:
+    key: str
+    label: str
+    default_ascending: bool = True
+    weight: float = 1.0
+
+
+def _sort_indicator(*, active: bool, ascending: bool) -> str:
+    if not active:
+        return ""
+    return " ↑" if ascending else " ↓"
+
+
+def _resolve_table_sort(
+    table_key: str,
+    columns: list[SortableColumn],
+    *,
+    default_column: str,
+) -> tuple[str, bool]:
+    state_key = f"table_sort_{table_key}"
+    default = next(column for column in columns if column.key == default_column)
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {"column": default_column, "ascending": default.default_ascending}
+    state = st.session_state[state_key]
+    weights = [column.weight for column in columns]
+    st.markdown('<div class="sortable-table-bundle-marker"></div>', unsafe_allow_html=True)
+    header_cols = st.columns(weights, gap="small")
+    sort_changed = False
+    for column, header_col in zip(columns, header_cols):
+        with header_col:
+            st.markdown('<span class="table-sort-header-slot"></span>', unsafe_allow_html=True)
+            active = state["column"] == column.key
+            label = f"{column.label}{_sort_indicator(active=active, ascending=state['ascending'])}"
+            if st.button(
+                label,
+                key=f"sort-header-{table_key}-{column.key}",
+                use_container_width=True,
+                type="primary" if active else "secondary",
+            ):
+                if active:
+                    state["ascending"] = not state["ascending"]
+                else:
+                    state["column"] = column.key
+                    state["ascending"] = column.default_ascending
+                st.session_state[state_key] = state
+                sort_changed = True
+    if sort_changed:
+        st.rerun()
+    return state["column"], state["ascending"]
+
+
 def _render_leaderboard_table(
     leaderboard: pd.DataFrame,
     *,
@@ -911,24 +1025,15 @@ def _render_leaderboard_table(
         file_name=export_file_name,
         key=f"{table_key}-export",
     )
-    sort_options = {
-        f"{money_column} (high to low)": (money_column, False),
-        f"{money_column} (low to high)": (money_column, True),
-        f"{recent_column} (newest)": (recent_column, False),
-        f"{recent_column} (oldest)": (recent_column, True),
-        f"{awards_column} (most)": (awards_column, False),
-        f"{share_column} (high to low)": (share_column, False),
-        "Contractor Name (A-Z)": ("Contractor Name", True),
-        "Contractor Name (Z-A)": ("Contractor Name", False),
-    }
-    default_sort = f"{money_column} (high to low)"
-    sort_label = st.selectbox(
-        "Sort by",
-        list(sort_options.keys()),
-        index=list(sort_options.keys()).index(default_sort),
-        key=f"{table_key}-sort",
-    )
-    column, ascending = sort_options[sort_label]
+    sort_columns = [
+        SortableColumn("Rank", "Rank", default_ascending=True, weight=0.6),
+        SortableColumn("Contractor Name", "Contractor Name", default_ascending=True, weight=2.2),
+        SortableColumn(money_column, money_column, default_ascending=False, weight=1.4),
+        SortableColumn(share_column, share_column, default_ascending=False, weight=1.0),
+        SortableColumn(awards_column, awards_column, default_ascending=False, weight=1.0),
+        SortableColumn(recent_column, recent_column, default_ascending=False, weight=1.1),
+    ]
+    column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=money_column)
     sorted_df = _sort_table(leaderboard, column, ascending=ascending)
     sorted_df = sorted_df.copy()
     sorted_df["Rank"] = range(1, len(sorted_df) + 1)
@@ -955,7 +1060,6 @@ def _render_leaderboard_table(
         f"""
         <div class="competitor-table-wrap">
           <table class="competitor-table">
-            <thead><tr><th>Rank</th><th>Contractor Name</th><th>{html.escape(money_column)}</th><th>{html.escape(share_column)}</th><th>{html.escape(awards_column)}</th><th>{html.escape(recent_column)}</th></tr></thead>
             <tbody>
         """
         + "".join(rows)
@@ -987,7 +1091,7 @@ def render_recent_wins_kpis(recent_wins: dict) -> None:
 def render_recent_wins_section(recent_wins: dict) -> None:
     if not recent_wins:
         return
-    st.markdown('<div class="section-title">Recent Service Wins</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Recent Service Wins (Last 12 Months)</div>', unsafe_allow_html=True)
     period = recent_wins.get("period") or {}
     start_date = period.get("start_date")
     end_date = period.get("end_date")
@@ -995,11 +1099,8 @@ def render_recent_wins_section(recent_wins: dict) -> None:
         st.caption(
             f"Services only: who is winning new work signed from {_date_label(start_date, long=True)} "
             f"through {_date_label(end_date, long=True)}. Includes new service contracts, task orders, "
-            f"and delivery orders. Excludes follow-on funding on older awards and product-only purchases "
-            f"(federal product/service codes with numeric PSCs, such as equipment, parts, and commodities). "
-            f"Each row is a distinct award or task order; similar Award IDs often share a parent contract vehicle. "
-            f"Descriptions and signed dates come from the original award action, not later funding modifications. "
-            f"Click an Award ID to open the contract in USAspending and verify details."
+            f"and delivery orders. Excludes follow-on funding on older awards and product-only purchases. "
+            f"Click an Award ID to open the contract in USAspending."
         )
     if recent_wins.get("error"):
         st.warning("Recent service wins could not be loaded. Obligation activity results are still shown below.")
@@ -1031,24 +1132,14 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
         key="recent-wins-export",
     )
     obligations_column = "Obligations in Scope"
-    sort_options = {
-        "Award Signed Date (newest)": ("Award Signed Date", False),
-        "Award Signed Date (oldest)": ("Award Signed Date", True),
-        "Win Obligations (high to low)": (obligations_column, False),
-        "Win Obligations (low to high)": (obligations_column, True),
-        "Contractor (A-Z)": ("Contractor", True),
-        "Contractor (Z-A)": ("Contractor", False),
-        "Award ID (A-Z)": ("Award ID", True),
-        "Award ID (Z-A)": ("Award ID", False),
-    }
-    default_sort = "Award Signed Date (newest)"
-    sort_label = st.selectbox(
-        "Sort by",
-        list(sort_options.keys()),
-        index=list(sort_options.keys()).index(default_sort),
-        key="recent-wins-sort",
-    )
-    column, ascending = sort_options[sort_label]
+    sort_columns = [
+        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=2.0),
+        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.3),
+        SortableColumn("Description", "Description", default_ascending=True, weight=3.5),
+        SortableColumn(obligations_column, "Win Obligations", default_ascending=False, weight=1.3),
+        SortableColumn("Award Signed Date", "Award Signed Date", default_ascending=False, weight=1.2),
+    ]
+    column, ascending = _resolve_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
     sorted_df = _sort_table(awards, column, ascending=ascending)
     scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 15 else "award-drilldown-table-wrap"
     rows = []
@@ -1079,13 +1170,25 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
         f"""
         <div class="{scroll_class}">
           <table class="award-drilldown-table">
-            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>Win Obligations</th><th>Award Signed Date</th></tr></thead>
             <tbody>
         """
         + "".join(rows)
         + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
+
+
+def render_obligation_activity_header(results: dict) -> None:
+    period = results.get("period") or {}
+    start_date = period.get("start_date")
+    end_date = period.get("end_date")
+    st.markdown('<div class="results-panel-title">Obligation Activity</div>', unsafe_allow_html=True)
+    if start_date and end_date:
+        st.markdown(
+            f'<div class="results-panel-subtitle">Transaction obligations from {_date_label(start_date, long=True)} '
+            f"through {_date_label(end_date, long=True)} — your selected period of performance.</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _chip_removal_target(chip_id: str, analyzed: FilterSnapshot) -> tuple[FilterSnapshot | None, dict[str, object]]:
@@ -1356,20 +1459,16 @@ def _render_awards_drilldown_table(
         file_name=export_file_name,
         key=f"{table_key}-export",
     )
-    sort_options = {
-        f"{obligations_label} (high to low)": (obligations_column, False),
-        f"{obligations_label} (low to high)": (obligations_column, True),
-        "Contractor (A-Z)": ("Contractor", True),
-        "Contractor (Z-A)": ("Contractor", False),
-        "Award ID (A-Z)": ("Award ID", True),
-        "Award ID (Z-A)": ("Award ID", False),
-    }
-    sort_label = st.selectbox(
-        "Sort by",
-        list(sort_options.keys()),
-        key=f"{table_key}-sort",
-    )
-    column, ascending = sort_options[sort_label]
+    sort_columns = [
+        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=2.0),
+        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.3),
+        SortableColumn("Description", "Description", default_ascending=True, weight=3.0),
+        SortableColumn(obligations_column, obligations_label, default_ascending=False, weight=1.3),
+        SortableColumn("Performance Location", "Performance Location", default_ascending=True, weight=1.5),
+        SortableColumn("Awarding Office", "Awarding Office", default_ascending=True, weight=1.4),
+        SortableColumn("Funding Office", "Funding Office", default_ascending=True, weight=1.4),
+    ]
+    column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=obligations_column)
     visible = _sort_table(visible, column, ascending=ascending)
     scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
     rows = []
@@ -1396,7 +1495,6 @@ def _render_awards_drilldown_table(
         f"""
         <div class="{scroll_class}">
           <table class="award-drilldown-table">
-            <thead><tr><th>Contractor</th><th>Award ID</th><th>Description</th><th>{html.escape(obligations_label)}</th><th>Performance Location</th><th>Awarding Office</th><th>Funding Office</th></tr></thead>
             <tbody>
         """
         + "".join(rows)
@@ -1525,15 +1623,18 @@ def main() -> None:
         )
     config = get_agency_component_config(analyzed.agency)
     render_applied_filters(analyzed, config["label"])
-    render_recent_wins_section(results.get("recent_wins") or {})
-    render_scope_line(results)
-    render_kpis(results)
-    render_leaderboard(results["leaderboard"])
-    st.markdown('<div class="section-title">Market Concentration</div>', unsafe_allow_html=True)
-    render_concentration(results["concentration"])
-    contractor_options = results["leaderboard"]["Contractor Name"].tolist() if not results["leaderboard"].empty else []
-    selected_contractors = render_contractor_selector(contractor_options)
-    if selected_contractors:
-        render_contractor_kpis(results["transactions"], selected_contractors)
-    render_awards(results["transactions"], selected_contractors)
-    render_detail(results, selected_contractors)
+    with st.container(border=True):
+        st.markdown('<div class="results-panel-marker results-panel-recent-wins"></div>', unsafe_allow_html=True)
+        render_recent_wins_section(results.get("recent_wins") or {})
+    with st.container(border=True):
+        st.markdown('<div class="results-panel-marker results-panel-obligation-activity"></div>', unsafe_allow_html=True)
+        render_obligation_activity_header(results)
+        render_kpis(results)
+        render_concentration(results["concentration"])
+        render_leaderboard(results["leaderboard"])
+        contractor_options = results["leaderboard"]["Contractor Name"].tolist() if not results["leaderboard"].empty else []
+        selected_contractors = render_contractor_selector(contractor_options)
+        if selected_contractors:
+            render_contractor_kpis(results["transactions"], selected_contractors)
+        render_awards(results["transactions"], selected_contractors)
+        render_detail(results, selected_contractors)
