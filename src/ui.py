@@ -196,8 +196,19 @@ def styles() -> None:
         .metric-sub, .market-intel-subtitle, .market-intel-helper { color: var(--muted); font-size: .84rem; margin-top: .22rem; }
         .section-title { color: var(--text); font-size: 1.05rem; font-weight: 850; margin: 1.25rem 0 .45rem; }
         .applied-filter-heading { color: #cbd5e1; font-weight: 800; margin-top: .8rem; margin-bottom: .45rem; }
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-row) {
+            flex-wrap: nowrap !important;
+            gap: .5rem !important;
+            align-items: center !important;
+            overflow-x: auto !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-row) > div[data-testid="column"] {
+            width: auto !important;
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+        }
         div[data-testid="stHorizontalBlock"]:has(.applied-filter-chip-slot) {
-            flex-wrap: wrap !important;
+            flex-wrap: nowrap !important;
             gap: .5rem !important;
             align-items: center !important;
         }
@@ -224,6 +235,7 @@ def styles() -> None:
             background: rgba(30, 41, 59, 1) !important;
         }
         .applied-filter-chip-slot { display: none; }
+        .applied-filter-chip-row { display: none; }
         div[data-testid="stHorizontalBlock"]:has(.award-export-button-slot) {
             margin: 0 0 .45rem !important;
             align-items: center !important;
@@ -1171,7 +1183,24 @@ def render_recent_wins_section(recent_wins: dict) -> None:
         include_supply_purchases=include_supply,
     )
     render_recent_wins_kpis(display)
+    render_recent_wins_leaderboard(display.get("leaderboard", pd.DataFrame()))
     render_recent_wins_table(display.get("awards", pd.DataFrame()))
+
+
+def render_recent_wins_leaderboard(leaderboard: pd.DataFrame) -> None:
+    if leaderboard.empty:
+        return
+    _render_leaderboard_table(
+        leaderboard,
+        title="Top Winning Contractors",
+        table_key="recent-wins-leaderboard",
+        money_column="Win Obligations",
+        share_column="Share of Wins",
+        awards_column="New Service Awards",
+        recent_column="Most Recent Win",
+        export_file_name="recent-winning-contractors.xlsx",
+        export_worksheet_title="Recent Winning Contractors",
+    )
 
 
 def render_recent_wins_table(awards: pd.DataFrame) -> None:
@@ -1194,7 +1223,7 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
     ]
     column, ascending = _get_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
     sorted_df = _sort_table(awards, column, ascending=ascending)
-    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 15 else "award-drilldown-table-wrap"
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 10 else "award-drilldown-table-wrap"
     rows = []
     for row in sorted_df.to_dict("records"):
         award_link = row.get("USAspending Award Link") or ""
@@ -1361,6 +1390,7 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
     if not chips:
         return
     st.markdown('<div class="applied-filter-heading">Applied filters</div>', unsafe_allow_html=True)
+    st.markdown('<div class="applied-filter-chip-row"></div>', unsafe_allow_html=True)
     chip_cols = st.columns(len(chips), gap="small")
     for idx, chip in enumerate(chips):
         with chip_cols[idx]:
@@ -1409,7 +1439,7 @@ def _contractor_selection_label(contractor_names: list[str]) -> str:
 
 
 def render_contractor_selector(options: list[str]) -> list[str]:
-    st.markdown('<div class="section-title">Contractor Detail</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Contractor Detail (select Contractor(s) to see only their data)</div>', unsafe_allow_html=True)
     current = st.session_state.get(CONTRACTOR_WIDGET_KEY, [])
     if not isinstance(current, list):
         current = [current] if current else []
@@ -1490,7 +1520,6 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         title=title,
         table_key=f"awards-table-{file_suffix}",
         export_file_name=f"top-relevant-awards-{file_suffix}.xlsx",
-        max_rows=None if contractor_names else 25,
     )
 
 
@@ -1500,14 +1529,12 @@ def _render_awards_drilldown_table(
     title: str,
     table_key: str,
     export_file_name: str,
-    max_rows: int | None = 25,
     obligations_header: str | None = None,
 ) -> None:
     if awards.empty:
         return
     obligations_column = "Obligations in Scope"
     obligations_label = obligations_header or obligations_column
-    visible = awards if max_rows is None else awards.head(max_rows)
     _render_table_toolbar(
         title=title,
         data=awards_export_xlsx(awards),
@@ -1524,8 +1551,8 @@ def _render_awards_drilldown_table(
         SortableColumn("Funding Office", "Funding Office", default_ascending=True),
     ]
     column, ascending = _get_table_sort(table_key, sort_columns, default_column=obligations_column)
-    visible = _sort_table(visible, column, ascending=ascending)
-    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
+    visible = _sort_table(awards, column, ascending=ascending)
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 10 else "award-drilldown-table-wrap"
     rows = []
     for row in visible.to_dict("records"):
         award_link = row.get("USAspending Award Link") or ""
