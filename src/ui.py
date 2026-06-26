@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -266,58 +267,31 @@ def styles() -> None:
         .results-panel-marker { display: none; }
         .results-panel-title { color: var(--text); font-size: 1.12rem; font-weight: 850; margin: 0 0 .35rem; }
         .results-panel-subtitle { color: var(--muted); font-size: .88rem; margin: 0 0 .95rem; line-height: 1.45; }
-        .sortable-table-bundle-marker { display: none; }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) {
-            gap: 0 !important;
-            margin: 0 !important;
+        .competitor-table th.sortable-th,
+        .award-drilldown-table th.sortable-th {
+            padding: 0;
+            white-space: nowrap;
         }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) > div[data-testid="column"] {
-            padding: 0 !important;
+        .competitor-table th.sortable-th a,
+        .award-drilldown-table th.sortable-th a {
+            color: #dbeafe;
+            text-decoration: none;
+            display: block;
+            font-weight: 750;
+            padding: .65rem .7rem;
+            white-space: nowrap;
         }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button {
-            width: 100% !important;
-            border-radius: 0 !important;
-            border: none !important;
-            border-bottom: 1px solid var(--border) !important;
-            border-right: 1px solid rgba(148, 163, 184, 0.12) !important;
-            background: rgba(15, 23, 42, 0.96) !important;
-            color: #dbeafe !important;
-            font-size: .76rem !important;
-            font-weight: 750 !important;
-            text-align: left !important;
-            padding: .62rem .55rem !important;
-            min-height: 2.35rem !important;
-            box-shadow: none !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            line-height: 1.15 !important;
+        .competitor-table th.sortable-th.is-active,
+        .award-drilldown-table th.sortable-th.is-active {
+            background: rgba(30, 58, 138, 0.72);
         }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) {
-            align-items: stretch !important;
+        .competitor-table th.sortable-th.is-active a,
+        .award-drilldown-table th.sortable-th.is-active a {
+            color: #f8fafc;
         }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot):last-child [data-testid="stButton"] > button {
-            border-right: none !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button:hover {
-            background: rgba(30, 41, 59, 1) !important;
-            color: #f8fafc !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot) [data-testid="stButton"] > button[kind="primary"] {
-            background: rgba(30, 58, 138, 0.72) !important;
-            color: #f8fafc !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) .award-drilldown-table-wrap,
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) .competitor-table-wrap {
-            border-top: none;
-            border-radius: 0 0 8px 8px;
-            margin-top: 0;
-        }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) div[data-testid="column"]:first-child [data-testid="stButton"] > button {
-            border-radius: 8px 0 0 0 !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) div[data-testid="column"]:last-child [data-testid="stButton"] > button {
-            border-radius: 0 8px 0 0 !important;
+        .competitor-table th.sortable-th a:hover,
+        .award-drilldown-table th.sortable-th a:hover {
+            color: #67e8f9;
         }
         .award-drilldown-table td, .competitor-table td { color: #e5edf8; padding: .58rem .7rem; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
         .award-drilldown-table tr:nth-child(even) td, .competitor-table tr:nth-child(even) td { background: rgba(15,23,42,.42); }
@@ -962,56 +936,91 @@ def _sort_table(
     return frame.sort_values(sort_by, ascending=ascending, na_position="last").reset_index(drop=True)
 
 
-@dataclass(frozen=True)
-class SortableColumn:
-    key: str
-    label: str
-    default_ascending: bool = True
-    weight: float = 1.0
-
-
 def _sort_indicator(*, active: bool, ascending: bool) -> str:
     if not active:
         return ""
     return " ↑" if ascending else " ↓"
 
 
-def _resolve_table_sort(
+@dataclass(frozen=True)
+class SortableColumn:
+    key: str
+    label: str
+    default_ascending: bool = True
+
+
+def _query_param_value(params: dict, key: str) -> str:
+    value = params.get(key, "")
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    return str(value or "")
+
+
+def _get_table_sort(
     table_key: str,
     columns: list[SortableColumn],
     *,
     default_column: str,
 ) -> tuple[str, bool]:
-    state_key = f"table_sort_{table_key}"
+    sort_param = f"ts_{table_key}"
+    asc_param = f"ta_{table_key}"
+    valid_keys = {column.key for column in columns}
     default = next(column for column in columns if column.key == default_column)
+    state_key = f"table_sort_{table_key}"
+    params = dict(st.query_params)
+    if sort_param in params:
+        column = _query_param_value(params, sort_param)
+        ascending = _query_param_value(params, asc_param) == "1"
+        if column in valid_keys:
+            st.session_state[state_key] = {"column": column, "ascending": ascending}
+            return column, ascending
     if state_key not in st.session_state:
         st.session_state[state_key] = {"column": default_column, "ascending": default.default_ascending}
     state = st.session_state[state_key]
-    weights = [column.weight for column in columns]
-    st.markdown('<div class="sortable-table-bundle-marker"></div>', unsafe_allow_html=True)
-    header_cols = st.columns(weights, gap="small")
-    sort_changed = False
-    for column, header_col in zip(columns, header_cols):
-        with header_col:
-            st.markdown('<span class="table-sort-header-slot"></span>', unsafe_allow_html=True)
-            active = state["column"] == column.key
-            label = f"{column.label}{_sort_indicator(active=active, ascending=state['ascending'])}"
-            if st.button(
-                label,
-                key=f"sort-header-{table_key}-{column.key}",
-                use_container_width=True,
-                type="primary" if active else "secondary",
-            ):
-                if active:
-                    state["ascending"] = not state["ascending"]
-                else:
-                    state["column"] = column.key
-                    state["ascending"] = column.default_ascending
-                st.session_state[state_key] = state
-                sort_changed = True
-    if sort_changed:
-        st.rerun()
     return state["column"], state["ascending"]
+
+
+def _sort_header_href(
+    table_key: str,
+    column: SortableColumn,
+    *,
+    current_column: str,
+    current_ascending: bool,
+) -> str:
+    if column.key == current_column:
+        next_ascending = not current_ascending
+    else:
+        next_ascending = column.default_ascending
+    params = {key: _query_param_value(dict(st.query_params), key) for key in st.query_params}
+    params[f"ts_{table_key}"] = column.key
+    params[f"ta_{table_key}"] = "1" if next_ascending else "0"
+    return f"?{urlencode(params)}"
+
+
+def _render_sortable_table_head(
+    table_key: str,
+    columns: list[SortableColumn],
+    *,
+    current_column: str,
+    current_ascending: bool,
+) -> str:
+    cells = []
+    for column in columns:
+        active = column.key == current_column
+        indicator = _sort_indicator(active=active, ascending=current_ascending)
+        href = html.escape(
+            _sort_header_href(
+                table_key,
+                column,
+                current_column=current_column,
+                current_ascending=current_ascending,
+            ),
+            quote=True,
+        )
+        label = html.escape(f"{column.label}{indicator}")
+        th_class = "sortable-th is-active" if active else "sortable-th"
+        cells.append(f'<th class="{th_class}"><a href="{href}">{label}</a></th>')
+    return "<thead><tr>" + "".join(cells) + "</tr></thead>"
 
 
 def _render_leaderboard_table(
@@ -1033,14 +1042,14 @@ def _render_leaderboard_table(
         key=f"{table_key}-export",
     )
     sort_columns = [
-        SortableColumn("Rank", "Rank", default_ascending=True, weight=0.55),
-        SortableColumn("Contractor Name", "Contractor", default_ascending=True, weight=2.3),
-        SortableColumn(money_column, "Obligations", default_ascending=False, weight=1.35),
-        SortableColumn(share_column, "Share", default_ascending=False, weight=0.9),
-        SortableColumn(awards_column, "Awards", default_ascending=False, weight=0.85),
-        SortableColumn(recent_column, "Latest", default_ascending=False, weight=1.05),
+        SortableColumn("Rank", "Rank", default_ascending=True),
+        SortableColumn("Contractor Name", "Contractor", default_ascending=True),
+        SortableColumn(money_column, "Obligations", default_ascending=False),
+        SortableColumn(share_column, "Share", default_ascending=False),
+        SortableColumn(awards_column, "Awards", default_ascending=False),
+        SortableColumn(recent_column, "Latest", default_ascending=False),
     ]
-    column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=money_column)
+    column, ascending = _get_table_sort(table_key, sort_columns, default_column=money_column)
     sorted_df = _sort_table(leaderboard, column, ascending=ascending)
     sorted_df = sorted_df.copy()
     sorted_df["Rank"] = range(1, len(sorted_df) + 1)
@@ -1063,10 +1072,17 @@ def _render_leaderboard_table(
             f"<td>{html.escape(recent_text)}</td>"
             "</tr>"
         )
+    table_head = _render_sortable_table_head(
+        table_key,
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
     st.markdown(
         f"""
         <div class="competitor-table-wrap">
           <table class="competitor-table">
+            {table_head}
             <tbody>
         """
         + "".join(rows)
@@ -1140,13 +1156,13 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
     )
     obligations_column = "Obligations in Scope"
     sort_columns = [
-        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=2.0),
-        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.35),
-        SortableColumn("Description", "Description", default_ascending=True, weight=3.2),
-        SortableColumn(obligations_column, "Win $", default_ascending=False, weight=1.25),
-        SortableColumn("Award Signed Date", "Signed", default_ascending=False, weight=1.2),
+        SortableColumn("Contractor", "Contractor", default_ascending=True),
+        SortableColumn("Award ID", "Award ID", default_ascending=True),
+        SortableColumn("Description", "Description", default_ascending=True),
+        SortableColumn(obligations_column, "Win Obligations", default_ascending=False),
+        SortableColumn("Award Signed Date", "Signed Date", default_ascending=False),
     ]
-    column, ascending = _resolve_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
+    column, ascending = _get_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
     sorted_df = _sort_table(awards, column, ascending=ascending)
     scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 15 else "award-drilldown-table-wrap"
     rows = []
@@ -1173,10 +1189,17 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
             f"<td>{html.escape(signed_text)}</td>"
             "</tr>"
         )
+    table_head = _render_sortable_table_head(
+        "recent-wins",
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
     st.markdown(
         f"""
         <div class="{scroll_class}">
           <table class="award-drilldown-table">
+            {table_head}
             <tbody>
         """
         + "".join(rows)
@@ -1467,15 +1490,15 @@ def _render_awards_drilldown_table(
         key=f"{table_key}-export",
     )
     sort_columns = [
-        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=1.9),
-        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.25),
-        SortableColumn("Description", "Description", default_ascending=True, weight=2.8),
-        SortableColumn(obligations_column, "Obligations", default_ascending=False, weight=1.2),
-        SortableColumn("Performance Location", "Location", default_ascending=True, weight=1.35),
-        SortableColumn("Awarding Office", "Awarding", default_ascending=True, weight=1.25),
-        SortableColumn("Funding Office", "Funding", default_ascending=True, weight=1.25),
+        SortableColumn("Contractor", "Contractor", default_ascending=True),
+        SortableColumn("Award ID", "Award ID", default_ascending=True),
+        SortableColumn("Description", "Description", default_ascending=True),
+        SortableColumn(obligations_column, obligations_label, default_ascending=False),
+        SortableColumn("Performance Location", "Location", default_ascending=True),
+        SortableColumn("Awarding Office", "Awarding Office", default_ascending=True),
+        SortableColumn("Funding Office", "Funding Office", default_ascending=True),
     ]
-    column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=obligations_column)
+    column, ascending = _get_table_sort(table_key, sort_columns, default_column=obligations_column)
     visible = _sort_table(visible, column, ascending=ascending)
     scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 15 else "award-drilldown-table-wrap"
     rows = []
@@ -1498,10 +1521,17 @@ def _render_awards_drilldown_table(
             f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
             "</tr>"
         )
+    table_head = _render_sortable_table_head(
+        table_key,
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
     st.markdown(
         f"""
         <div class="{scroll_class}">
           <table class="award-drilldown-table">
+            {table_head}
             <tbody>
         """
         + "".join(rows)
