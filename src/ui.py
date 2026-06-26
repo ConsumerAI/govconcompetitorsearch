@@ -225,7 +225,16 @@ def styles() -> None:
         }
         .applied-filter-chip-slot { display: none; }
         div[data-testid="stHorizontalBlock"]:has(.award-export-button-slot) {
-            margin: 0 0 .35rem !important;
+            margin: 0 0 .45rem !important;
+            align-items: center !important;
+        }
+        div[data-testid="column"]:has(.award-export-button-slot) {
+            display: flex !important;
+            justify-content: flex-end !important;
+            align-items: center !important;
+        }
+        div[data-testid="column"]:has(.award-export-button-slot) [data-testid="stDownloadButton"] {
+            margin-left: auto !important;
         }
         div[data-testid="column"]:has(.award-export-button-slot) [data-testid="stDownloadButton"] > button {
             border-radius: 6px !important;
@@ -245,6 +254,13 @@ def styles() -> None:
             background: rgba(30, 41, 59, 1) !important;
         }
         .award-export-toolbar-slot, .award-export-button-slot { display: none; }
+        .table-toolbar-title {
+            color: var(--text);
+            font-size: 1.05rem;
+            font-weight: 850;
+            margin: 0;
+            line-height: 1.2;
+        }
         .competitor-table-wrap { overflow-x: auto; overflow-y: auto; max-height: 28rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap.is-scrollable { overflow-y: auto; max-height: 28rem; }
@@ -912,8 +928,10 @@ def _contractor_link_markup(name: str, *, uei: str = "") -> str:
     return f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{contractor}</a>'
 
 
-def _render_excel_export_button(*, data: bytes, file_name: str, key: str) -> None:
-    export_col, _ = st.columns([1.55, 6.45], vertical_alignment="bottom")
+def _render_table_toolbar(*, title: str, data: bytes, file_name: str, key: str) -> None:
+    title_col, export_col = st.columns([7, 3], vertical_alignment="center")
+    with title_col:
+        st.markdown(f'<div class="table-toolbar-title">{html.escape(title)}</div>', unsafe_allow_html=True)
     with export_col:
         st.markdown('<div class="award-export-button-slot"></div>', unsafe_allow_html=True)
         st.download_button(
@@ -1026,6 +1044,7 @@ def _render_sortable_table_head(
 def _render_leaderboard_table(
     leaderboard: pd.DataFrame,
     *,
+    title: str,
     table_key: str,
     money_column: str,
     share_column: str,
@@ -1036,7 +1055,8 @@ def _render_leaderboard_table(
 ) -> None:
     if leaderboard.empty:
         return
-    _render_excel_export_button(
+    _render_table_toolbar(
+        title=title,
         data=leaderboard_export_xlsx(leaderboard, worksheet_title=export_worksheet_title),
         file_name=export_file_name,
         key=f"{table_key}-export",
@@ -1147,9 +1167,8 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
     if awards.empty:
         st.info("No new service awards found for this scope in the last 12 months.")
         return
-    if len(awards) > 15:
-        st.caption(f"Showing all {len(awards):,} new service awards.")
-    _render_excel_export_button(
+    _render_table_toolbar(
+        title="New Service Awards",
         data=awards_export_xlsx(awards),
         file_name="recent-service-wins.xlsx",
         key="recent-wins-export",
@@ -1352,14 +1371,12 @@ def render_applied_filters(analyzed: FilterSnapshot, component_label: str) -> No
 
 
 def render_leaderboard(leaderboard: pd.DataFrame) -> None:
-    st.markdown('<div class="section-title">Top Competitors by Obligations</div>', unsafe_allow_html=True)
     if leaderboard.empty:
         st.info("No contractors found for this scope.")
         return
-    if len(leaderboard) > 15:
-        st.caption(f"Showing all {len(leaderboard):,} contractors.")
     _render_leaderboard_table(
         leaderboard,
+        title="Top Competitors by Obligations",
         table_key="obligation-leaderboard",
         money_column="Obligations in Scope",
         share_column="Market Share",
@@ -1452,17 +1469,13 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
         title = f"Top Relevant Awards — {_contractor_selection_label(contractor_names)}"
     else:
         awards = award_table(transactions)
-    st.markdown(f'<div class="section-title">{html.escape(title)}</div>', unsafe_allow_html=True)
     if awards.empty:
         st.info("No award rows found for this scope.")
         return
     file_suffix = "selected-contractors" if contractor_names else "all-contractors"
-    visible_count = len(awards) if contractor_names else min(len(awards), 25)
-    caption = f"Showing {visible_count:,} awards. Scroll the table for more." if visible_count > 15 else ""
-    if caption:
-        st.caption(caption)
     _render_awards_drilldown_table(
         awards,
+        title=title,
         table_key=f"awards-table-{file_suffix}",
         export_file_name=f"top-relevant-awards-{file_suffix}.xlsx",
         max_rows=None if contractor_names else 25,
@@ -1472,6 +1485,7 @@ def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None
 def _render_awards_drilldown_table(
     awards: pd.DataFrame,
     *,
+    title: str,
     table_key: str,
     export_file_name: str,
     max_rows: int | None = 25,
@@ -1482,9 +1496,8 @@ def _render_awards_drilldown_table(
     obligations_column = "Obligations in Scope"
     obligations_label = obligations_header or obligations_column
     visible = awards if max_rows is None else awards.head(max_rows)
-    if max_rows is not None and len(awards) > len(visible):
-        st.caption(f"Showing top {len(visible):,} of {len(awards):,} awards by {obligations_label.lower()}. Export includes all awards.")
-    _render_excel_export_button(
+    _render_table_toolbar(
+        title=title,
         data=awards_export_xlsx(awards),
         file_name=export_file_name,
         key=f"{table_key}-export",
