@@ -254,12 +254,13 @@ def styles() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.results-panel-recent-wins) {
             background: linear-gradient(180deg, rgba(8, 47, 73, 0.34), rgba(8, 13, 24, 0.12));
             padding: 1rem 1.1rem 1.2rem;
-            margin: 0 0 1.35rem;
+            margin: 0;
             border-color: rgba(34, 211, 238, 0.24) !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.results-panel-obligation-activity) {
             background: linear-gradient(180deg, rgba(49, 46, 129, 0.28), rgba(8, 13, 24, 0.1));
             padding: 1rem 1.1rem 1.2rem;
+            margin: 0 0 1.35rem;
             border-color: rgba(167, 139, 250, 0.22) !important;
         }
         .results-panel-marker { display: none; }
@@ -281,13 +282,19 @@ def styles() -> None:
             border-right: 1px solid rgba(148, 163, 184, 0.12) !important;
             background: rgba(15, 23, 42, 0.96) !important;
             color: #dbeafe !important;
-            font-size: .82rem !important;
+            font-size: .76rem !important;
             font-weight: 750 !important;
             text-align: left !important;
-            padding: .65rem .7rem !important;
-            min-height: unset !important;
+            padding: .62rem .55rem !important;
+            min-height: 2.35rem !important;
             box-shadow: none !important;
-            white-space: normal !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            line-height: 1.15 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="stHorizontalBlock"]:has(.table-sort-header-slot) {
+            align-items: stretch !important;
         }
         div[data-testid="stVerticalBlock"]:has(.sortable-table-bundle-marker) div[data-testid="column"]:has(.table-sort-header-slot):last-child [data-testid="stButton"] > button {
             border-right: none !important;
@@ -1026,12 +1033,12 @@ def _render_leaderboard_table(
         key=f"{table_key}-export",
     )
     sort_columns = [
-        SortableColumn("Rank", "Rank", default_ascending=True, weight=0.6),
-        SortableColumn("Contractor Name", "Contractor Name", default_ascending=True, weight=2.2),
-        SortableColumn(money_column, money_column, default_ascending=False, weight=1.4),
-        SortableColumn(share_column, share_column, default_ascending=False, weight=1.0),
-        SortableColumn(awards_column, awards_column, default_ascending=False, weight=1.0),
-        SortableColumn(recent_column, recent_column, default_ascending=False, weight=1.1),
+        SortableColumn("Rank", "Rank", default_ascending=True, weight=0.55),
+        SortableColumn("Contractor Name", "Contractor", default_ascending=True, weight=2.3),
+        SortableColumn(money_column, "Obligations", default_ascending=False, weight=1.35),
+        SortableColumn(share_column, "Share", default_ascending=False, weight=0.9),
+        SortableColumn(awards_column, "Awards", default_ascending=False, weight=0.85),
+        SortableColumn(recent_column, "Latest", default_ascending=False, weight=1.05),
     ]
     column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=money_column)
     sorted_df = _sort_table(leaderboard, column, ascending=ascending)
@@ -1134,10 +1141,10 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
     obligations_column = "Obligations in Scope"
     sort_columns = [
         SortableColumn("Contractor", "Contractor", default_ascending=True, weight=2.0),
-        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.3),
-        SortableColumn("Description", "Description", default_ascending=True, weight=3.5),
-        SortableColumn(obligations_column, "Win Obligations", default_ascending=False, weight=1.3),
-        SortableColumn("Award Signed Date", "Award Signed Date", default_ascending=False, weight=1.2),
+        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.35),
+        SortableColumn("Description", "Description", default_ascending=True, weight=3.2),
+        SortableColumn(obligations_column, "Win $", default_ascending=False, weight=1.25),
+        SortableColumn("Award Signed Date", "Signed", default_ascending=False, weight=1.2),
     ]
     column, ascending = _resolve_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
     sorted_df = _sort_table(awards, column, ascending=ascending)
@@ -1460,13 +1467,13 @@ def _render_awards_drilldown_table(
         key=f"{table_key}-export",
     )
     sort_columns = [
-        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=2.0),
-        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.3),
-        SortableColumn("Description", "Description", default_ascending=True, weight=3.0),
-        SortableColumn(obligations_column, obligations_label, default_ascending=False, weight=1.3),
-        SortableColumn("Performance Location", "Performance Location", default_ascending=True, weight=1.5),
-        SortableColumn("Awarding Office", "Awarding Office", default_ascending=True, weight=1.4),
-        SortableColumn("Funding Office", "Funding Office", default_ascending=True, weight=1.4),
+        SortableColumn("Contractor", "Contractor", default_ascending=True, weight=1.9),
+        SortableColumn("Award ID", "Award ID", default_ascending=True, weight=1.25),
+        SortableColumn("Description", "Description", default_ascending=True, weight=2.8),
+        SortableColumn(obligations_column, "Obligations", default_ascending=False, weight=1.2),
+        SortableColumn("Performance Location", "Location", default_ascending=True, weight=1.35),
+        SortableColumn("Awarding Office", "Awarding", default_ascending=True, weight=1.25),
+        SortableColumn("Funding Office", "Funding", default_ascending=True, weight=1.25),
     ]
     column, ascending = _resolve_table_sort(table_key, sort_columns, default_column=obligations_column)
     visible = _sort_table(visible, column, ascending=ascending)
@@ -1624,9 +1631,6 @@ def main() -> None:
     config = get_agency_component_config(analyzed.agency)
     render_applied_filters(analyzed, config["label"])
     with st.container(border=True):
-        st.markdown('<div class="results-panel-marker results-panel-recent-wins"></div>', unsafe_allow_html=True)
-        render_recent_wins_section(results.get("recent_wins") or {})
-    with st.container(border=True):
         st.markdown('<div class="results-panel-marker results-panel-obligation-activity"></div>', unsafe_allow_html=True)
         render_obligation_activity_header(results)
         render_kpis(results)
@@ -1638,3 +1642,6 @@ def main() -> None:
             render_contractor_kpis(results["transactions"], selected_contractors)
         render_awards(results["transactions"], selected_contractors)
         render_detail(results, selected_contractors)
+    with st.container(border=True):
+        st.markdown('<div class="results-panel-marker results-panel-recent-wins"></div>', unsafe_allow_html=True)
+        render_recent_wins_section(results.get("recent_wins") or {})
