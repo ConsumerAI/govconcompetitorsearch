@@ -261,6 +261,16 @@ def styles() -> None:
             margin: 0;
             line-height: 1.2;
         }
+        .table-section-start {
+            display: block;
+            height: 0;
+            margin-top: 1.35rem;
+        }
+        .market-concentration-tail-spacer {
+            display: block;
+            height: 0;
+            margin-bottom: 0.35rem;
+        }
         .competitor-table-wrap { overflow-x: auto; overflow-y: auto; max-height: 28rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(9,14,27,.74); }
         .award-drilldown-table-wrap.is-scrollable { overflow-y: auto; max-height: 28rem; }
@@ -929,6 +939,7 @@ def _contractor_link_markup(name: str, *, uei: str = "") -> str:
 
 
 def _render_table_toolbar(*, title: str, data: bytes, file_name: str, key: str) -> None:
+    st.markdown('<div class="table-section-start"></div>', unsafe_allow_html=True)
     title_col, export_col = st.columns([7, 3], vertical_alignment="center")
     with title_col:
         st.markdown(f'<div class="table-toolbar-title">{html.escape(title)}</div>', unsafe_allow_html=True)
@@ -1443,21 +1454,22 @@ def render_concentration(concentration: dict) -> None:
     )
     if not concentration["breakdown"]:
         st.info("No positive obligation transactions in this scope.")
-        return
-    for row in concentration["breakdown"]:
-        contractor_markup = _contractor_link_markup(
-            str(row["contractor"]),
-            uei=str(row.get("primary_uei") or ""),
-        )
-        st.markdown(
-            f"""
-            <div class="market-concentration-legend-row">
-                <div class="market-concentration-legend-name">{contractor_markup}</div>
-                <div class="market-concentration-legend-metrics">{html.escape(format_full_money(row["amount"]))} · {html.escape(format_percent(row["share"]))}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    else:
+        for row in concentration["breakdown"]:
+            contractor_markup = _contractor_link_markup(
+                str(row["contractor"]),
+                uei=str(row.get("primary_uei") or ""),
+            )
+            st.markdown(
+                f"""
+                <div class="market-concentration-legend-row">
+                    <div class="market-concentration-legend-name">{contractor_markup}</div>
+                    <div class="market-concentration-legend-metrics">{html.escape(format_full_money(row["amount"]))} · {html.escape(format_percent(row["share"]))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    st.markdown('<div class="market-concentration-tail-spacer"></div>', unsafe_allow_html=True)
 
 
 def render_awards(transactions: pd.DataFrame, contractor_names: list[str] | None = None) -> None:
