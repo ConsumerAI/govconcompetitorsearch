@@ -132,6 +132,18 @@ class UiLayoutTests(unittest.TestCase):
             ui._sync_selectbox_state("filter_naics", [ui.UNAVAILABLE], ui.ALL_NAICS)
         self.assertEqual(session["filter_naics"], ui.UNAVAILABLE)
 
+    def test_table_sort_uses_session_state_not_query_params(self):
+        source = inspect.getsource(ui._get_table_sort) + inspect.getsource(ui._render_table_sort_controls)
+        self.assertNotIn("query_params", source)
+        self.assertNotIn("urlencode", source)
+        self.assertIn("table_sort_", source)
+        self.assertIn("st.button", source)
+
+    def test_sortable_tables_use_fragments(self):
+        source = inspect.getsource(ui._render_leaderboard_table) + inspect.getsource(ui.render_recent_wins_table)
+        self.assertIn("@st.fragment", source)
+        self.assertNotIn("_render_sortable_table_head", source)
+
     def test_successful_option_diagnostics_do_not_show_warning(self):
         diagnostics = {
             "component": {"lookup_type": "Agency Component", "elapsed_ms": 1.2},
