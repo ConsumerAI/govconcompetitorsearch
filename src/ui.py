@@ -1092,50 +1092,45 @@ def _render_leaderboard_table(
         SortableColumn(awards_column, "Awards", default_ascending=False),
         SortableColumn(recent_column, "Latest", default_ascending=False),
     ]
-
-    @st.fragment
-    def leaderboard_body() -> None:
-        column, ascending = _get_table_sort(table_key, sort_columns, default_column=money_column)
-        _render_table_sort_controls(
-            table_key,
-            sort_columns,
-            current_column=column,
-            current_ascending=ascending,
+    column, ascending = _get_table_sort(table_key, sort_columns, default_column=money_column)
+    _render_table_sort_controls(
+        table_key,
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
+    sorted_df = _sort_table(leaderboard, column, ascending=ascending)
+    sorted_df = sorted_df.copy()
+    sorted_df["Rank"] = range(1, len(sorted_df) + 1)
+    rows = []
+    for row in sorted_df.to_dict("records"):
+        name = str(row.get("Contractor Name") or "")
+        contractor_uei = str(row.get("Primary UEI") or "")
+        obligations = format_full_money(row.get(money_column))
+        share = format_percent(row.get(share_column))
+        unique_awards = int(row.get(awards_column) or 0)
+        recent = row.get(recent_column)
+        recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
+            f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
+            f"<td>{html.escape(obligations)}</td>"
+            f"<td>{html.escape(share)}</td>"
+            f"<td>{unique_awards:,}</td>"
+            f"<td>{html.escape(recent_text)}</td>"
+            "</tr>"
         )
-        sorted_df = _sort_table(leaderboard, column, ascending=ascending)
-        sorted_df = sorted_df.copy()
-        sorted_df["Rank"] = range(1, len(sorted_df) + 1)
-        rows = []
-        for row in sorted_df.to_dict("records"):
-            name = str(row.get("Contractor Name") or "")
-            contractor_uei = str(row.get("Primary UEI") or "")
-            obligations = format_full_money(row.get(money_column))
-            share = format_percent(row.get(share_column))
-            unique_awards = int(row.get(awards_column) or 0)
-            recent = row.get(recent_column)
-            recent_text = recent.isoformat() if pd.notna(recent) and recent else ""
-            rows.append(
-                "<tr>"
-                f"<td>{html.escape(str(row.get('Rank') or ''))}</td>"
-                f"<td>{_contractor_link_markup(name, uei=contractor_uei)}</td>"
-                f"<td>{html.escape(obligations)}</td>"
-                f"<td>{html.escape(share)}</td>"
-                f"<td>{unique_awards:,}</td>"
-                f"<td>{html.escape(recent_text)}</td>"
-                "</tr>"
-            )
-        st.markdown(
-            f"""
-            <div class="competitor-table-wrap has-sort-controls">
-              <table class="competitor-table">
-                <tbody>
-            """
-            + "".join(rows)
-            + "</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
-
-    leaderboard_body()
+    st.markdown(
+        f"""
+        <div class="competitor-table-wrap has-sort-controls">
+          <table class="competitor-table">
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_recent_wins_kpis(recent_wins: dict) -> None:
@@ -1225,54 +1220,49 @@ def render_recent_wins_table(awards: pd.DataFrame) -> None:
         SortableColumn(obligations_column, "Win Obligations", default_ascending=False),
         SortableColumn("Award Signed Date", "Signed Date", default_ascending=False),
     ]
-
-    @st.fragment
-    def recent_wins_body() -> None:
-        column, ascending = _get_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
-        _render_table_sort_controls(
-            "recent-wins",
-            sort_columns,
-            current_column=column,
-            current_ascending=ascending,
+    column, ascending = _get_table_sort("recent-wins", sort_columns, default_column="Award Signed Date")
+    _render_table_sort_controls(
+        "recent-wins",
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
+    sorted_df = _sort_table(awards, column, ascending=ascending)
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 10 else "award-drilldown-table-wrap"
+    rows = []
+    for row in sorted_df.to_dict("records"):
+        award_link = row.get("USAspending Award Link") or ""
+        award = html.escape(str(row.get("Award ID") or "Unavailable"))
+        award_markup = (
+            f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>'
+            if award_link
+            else award
         )
-        sorted_df = _sort_table(awards, column, ascending=ascending)
-        scroll_class = "award-drilldown-table-wrap is-scrollable" if len(sorted_df) > 10 else "award-drilldown-table-wrap"
-        rows = []
-        for row in sorted_df.to_dict("records"):
-            award_link = row.get("USAspending Award Link") or ""
-            award = html.escape(str(row.get("Award ID") or "Unavailable"))
-            award_markup = (
-                f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>'
-                if award_link
-                else award
-            )
-            contractor_markup = _contractor_link_markup(
-                str(row.get("Contractor") or ""),
-                uei=str(row.get("Recipient UEI") or ""),
-            )
-            signed = row.get("Award Signed Date")
-            signed_text = signed.isoformat() if pd.notna(signed) and signed else ""
-            rows.append(
-                "<tr>"
-                f"<td>{contractor_markup}</td>"
-                f"<td>{award_markup}</td>"
-                f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
-                f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
-                f"<td>{html.escape(signed_text)}</td>"
-                "</tr>"
-            )
-        st.markdown(
-            f"""
-            <div class="{scroll_class} has-sort-controls">
-              <table class="award-drilldown-table">
-                <tbody>
-            """
-            + "".join(rows)
-            + "</tbody></table></div>",
-            unsafe_allow_html=True,
+        contractor_markup = _contractor_link_markup(
+            str(row.get("Contractor") or ""),
+            uei=str(row.get("Recipient UEI") or ""),
         )
-
-    recent_wins_body()
+        signed = row.get("Award Signed Date")
+        signed_text = signed.isoformat() if pd.notna(signed) and signed else ""
+        rows.append(
+            "<tr>"
+            f"<td>{contractor_markup}</td>"
+            f"<td>{award_markup}</td>"
+            f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
+            f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
+            f"<td>{html.escape(signed_text)}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        f"""
+        <div class="{scroll_class} has-sort-controls">
+          <table class="award-drilldown-table">
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_obligation_activity_header(results: dict) -> None:
@@ -1558,50 +1548,45 @@ def _render_awards_drilldown_table(
         SortableColumn("Awarding Office", "Awarding Office", default_ascending=True),
         SortableColumn("Funding Office", "Funding Office", default_ascending=True),
     ]
-
-    @st.fragment
-    def awards_body() -> None:
-        column, ascending = _get_table_sort(table_key, sort_columns, default_column=obligations_column)
-        _render_table_sort_controls(
-            table_key,
-            sort_columns,
-            current_column=column,
-            current_ascending=ascending,
+    column, ascending = _get_table_sort(table_key, sort_columns, default_column=obligations_column)
+    _render_table_sort_controls(
+        table_key,
+        sort_columns,
+        current_column=column,
+        current_ascending=ascending,
+    )
+    visible = _sort_table(awards, column, ascending=ascending)
+    scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 10 else "award-drilldown-table-wrap"
+    rows = []
+    for row in visible.to_dict("records"):
+        award_link = row.get("USAspending Award Link") or ""
+        award = html.escape(str(row.get("Award ID") or "Unavailable"))
+        award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
+        contractor_markup = _contractor_link_markup(
+            str(row.get("Contractor") or ""),
+            uei=str(row.get("Recipient UEI") or ""),
         )
-        visible = _sort_table(awards, column, ascending=ascending)
-        scroll_class = "award-drilldown-table-wrap is-scrollable" if len(visible) > 10 else "award-drilldown-table-wrap"
-        rows = []
-        for row in visible.to_dict("records"):
-            award_link = row.get("USAspending Award Link") or ""
-            award = html.escape(str(row.get("Award ID") or "Unavailable"))
-            award_markup = f'<a href="{html.escape(award_link, quote=True)}" target="_blank" rel="noopener noreferrer">{award}</a>' if award_link else award
-            contractor_markup = _contractor_link_markup(
-                str(row.get("Contractor") or ""),
-                uei=str(row.get("Recipient UEI") or ""),
-            )
-            rows.append(
-                "<tr>"
-                f"<td>{contractor_markup}</td>"
-                f"<td>{award_markup}</td>"
-                f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
-                f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
-                f"<td>{html.escape(str(row.get('Performance Location') or ''))}</td>"
-                f"<td>{html.escape(str(row.get('Awarding Office') or ''))}</td>"
-                f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
-                "</tr>"
-            )
-        st.markdown(
-            f"""
-            <div class="{scroll_class} has-sort-controls">
-              <table class="award-drilldown-table">
-                <tbody>
-            """
-            + "".join(rows)
-            + "</tbody></table></div>",
-            unsafe_allow_html=True,
+        rows.append(
+            "<tr>"
+            f"<td>{contractor_markup}</td>"
+            f"<td>{award_markup}</td>"
+            f"<td>{html.escape(str(row.get('Description') or ''))}</td>"
+            f"<td>{html.escape(format_full_money(row.get(obligations_column)))}</td>"
+            f"<td>{html.escape(str(row.get('Performance Location') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('Awarding Office') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('Funding Office') or ''))}</td>"
+            "</tr>"
         )
-
-    awards_body()
+    st.markdown(
+        f"""
+        <div class="{scroll_class} has-sort-controls">
+          <table class="award-drilldown-table">
+            <tbody>
+        """
+        + "".join(rows)
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_detail(results: dict, contractor_names: list[str]) -> None:

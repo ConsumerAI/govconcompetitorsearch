@@ -139,9 +139,10 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("table_sort_", source)
         self.assertIn("st.button", source)
 
-    def test_sortable_tables_use_fragments(self):
+    def test_sortable_tables_use_session_state_buttons(self):
         source = inspect.getsource(ui._render_leaderboard_table) + inspect.getsource(ui.render_recent_wins_table)
-        self.assertIn("@st.fragment", source)
+        self.assertIn("_render_table_sort_controls", source)
+        self.assertNotIn("@st.fragment", source)
         self.assertNotIn("_render_sortable_table_head", source)
 
     def test_successful_option_diagnostics_do_not_show_warning(self):
