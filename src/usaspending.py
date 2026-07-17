@@ -122,6 +122,7 @@ def request_headers() -> dict:
 
 DOWNLOAD_GET_ATTEMPTS = 5
 SEGMENT_ATTEMPTS = 3
+SEGMENT_PARALLELISM = 4
 FILE_DOWNLOAD_TIMEOUT = 60
 
 
@@ -1011,6 +1012,41 @@ def _dedupe_exact_transactions(rows: list[dict]) -> tuple[list[dict], dict]:
     }
 
 
+def _fetch_segment_download(
+    snapshot: FilterSnapshot,
+    segment: dict,
+    *,
+    date_type: str = "",
+) -> tuple[list[dict], dict]:
+    segment_snapshot = snapshot_for_segment(snapshot, segment)
+    download_rows: list[dict] = []
+    download_diag: dict = {}
+    for attempt in range(1, SEGMENT_ATTEMPTS + 1):
+        download_rows, download_diag = fetch_transaction_download_rows(
+            segment_snapshot,
+            date_type=date_type or None,
+        )
+        if not download_diag.get("error"):
+            break
+        error_diag = download_diag["error"]
+        if attempt < SEGMENT_ATTEMPTS and _is_transient_download_error(error_diag):
+            time.sleep(2 * attempt)
+            continue
+        error = dict(error_diag)
+        error["segment"] = segment
+        error["attempts"] = attempt
+        return [], {
+            "error": error,
+            "payload": transaction_download_payload(segment_snapshot, date_type=date_type or None),
+        }
+    segment_diag = download_diag.get("diagnostics", {})
+    segment_diag["segment"] = segment
+    return download_rows, {
+        "payload": download_diag.get("payload", transaction_download_payload(segment_snapshot, date_type=date_type or None)),
+        "diagnostics": segment_diag,
+    }
+
+
 def fetch_transactions_uncached(
     agency: str,
     component: str,
@@ -1032,43 +1068,45 @@ def fetch_transactions_uncached(
     segment_diagnostics = []
     period = recent_wins_period_metadata(snapshot) if date_type == NEW_AWARDS_DATE_TYPE else period_metadata(snapshot)
     loading_label = "recent service wins" if date_type == NEW_AWARDS_DATE_TYPE else "competitor data"
-    for index, segment in enumerate(segments, start=1):
-        if progress_callback:
-            progress_callback(f"Loading {loading_label}: {index} of {len(segments)} periods")
-        segment_snapshot = snapshot_for_segment(snapshot, segment)
-        download_rows: list[dict] = []
-        download_diag: dict = {}
-        for attempt in range(1, SEGMENT_ATTEMPTS + 1):
-            download_rows, download_diag = fetch_transaction_download_rows(
-                segment_snapshot,
-                date_type=date_type or None,
-            )
-            if not download_diag.get("error"):
-                break
-            error_diag = download_diag["error"]
-            if attempt < SEGMENT_ATTEMPTS and _is_transient_download_error(error_diag):
-                if progress_callback:
-                    progress_callback(f"Retrying period {index} of {len(segments)} (attempt {attempt + 1})")
-                time.sleep(2 * attempt)
-                continue
-            error = dict(error_diag)
-            error["segment"] = segment
-            error["attempts"] = attempt
-            return normalize_transactions([], default_agency=agency), {
-                "payloads": payloads + [transaction_download_payload(segment_snapshot, date_type=date_type or None)],
-                "segments": segment_diagnostics,
-                "period": period,
-                "query_fingerprint": query_fingerprint_value,
-                "error": "Unable to load the complete selected date range. No new analysis was applied.",
-                "failures": [error],
-            }
-        payloads.append(download_diag.get("payload", transaction_download_payload(segment_snapshot)))
-        segment_diag = download_diag.get("diagnostics", {})
-        segment_diag["segment"] = segment
-        segment_diagnostics.append(segment_diag)
+    if progress_callback:
+        progress_callback(f"Loading {loading_label}: {len(segments)} periods in parallel")
+
+    workers = max(1, min(SEGMENT_PARALLELISM, len(segments) or 1))
+    ordered: list[tuple[list[dict], dict] | None] = [None] * len(segments)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {
+            pool.submit(_fetch_segment_download, snapshot, segment, date_type=date_type): index
+            for index, segment in enumerate(segments)
+        }
+        completed = 0
+        for future in as_completed(future_map):
+            index = future_map[future]
+            download_rows, download_diag = future.result()
+            completed += 1
+            if progress_callback:
+                progress_callback(f"Loading {loading_label}: {completed} of {len(segments)} periods ready")
+            if download_diag.get("error"):
+                for pending in future_map:
+                    pending.cancel()
+                error = download_diag["error"]
+                return normalize_transactions([], default_agency=agency), {
+                    "payloads": payloads + [download_diag.get("payload", transaction_download_payload(snapshot_for_segment(snapshot, segments[index]), date_type=date_type or None))],
+                    "segments": [item[1]["diagnostics"] for item in ordered if item and item[1].get("diagnostics")],
+                    "period": period,
+                    "query_fingerprint": query_fingerprint_value,
+                    "error": "Unable to load the complete selected date range. No new analysis was applied.",
+                    "failures": [error],
+                }
+            ordered[index] = (download_rows, download_diag)
+
+    for item in ordered:
+        if not item:
+            continue
+        download_rows, download_diag = item
+        payloads.append(download_diag.get("payload"))
+        segment_diagnostics.append(download_diag.get("diagnostics", {}))
         all_download_rows.extend(download_rows)
-        if index < len(segments):
-            time.sleep(0.25)
+
     if progress_callback:
         progress_callback("Combining transaction data")
     if all_download_rows:

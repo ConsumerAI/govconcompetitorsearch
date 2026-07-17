@@ -44,7 +44,7 @@ from .state import (
     snapshots_differ,
 )
 from .usaspending import fetch_recent_wins_for_snapshot, fetch_transactions_for_snapshot
-from .utils import clean_text, decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url, warm_recipient_profile_cache
+from .utils import clean_text, decode_option, format_full_money, format_money, format_option, format_percent, usaspending_recipient_profile_url
 
 UNAVAILABLE = "Unable to load options"
 _RETRY_BUTTON_KEYS_THIS_RUN: set[str] = set()
@@ -1718,10 +1718,6 @@ def main() -> None:
     if results is None or analyzed is None:
         return
     transactions = results.get("transactions")
-    if transactions is not None and not transactions.empty:
-        warm_recipient_profile_cache(
-            list(transactions["recipient_uei"].tolist()) + list(transactions["recipient_name"].tolist())
-        )
     config = get_agency_component_config(analyzed.agency)
     render_applied_filters(analyzed, config["label"])
     with st.container(border=True):

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import functools
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
-from typing import Iterable
 from urllib.parse import quote, urlencode
 
 import pandas as pd
-import requests
 
-from .constants import BASE_URL, OPTION_SEPARATOR
+from .constants import OPTION_SEPARATOR
 
 
 def clean_text(value: object) -> str:
@@ -100,52 +96,6 @@ def usaspending_award_url(contract_award_unique_key: str) -> str:
     return f"https://www.usaspending.gov/award/{quote(award_key, safe='_')}"
 
 
-@functools.lru_cache(maxsize=4096)
-def _recipient_id_for_keyword(keyword: str) -> str:
-    text = clean_text(keyword)
-    if not text:
-        return ""
-    try:
-        response = requests.post(
-            f"{BASE_URL}/api/v2/recipient/",
-            json={"keyword": text, "limit": 10, "page": 1},
-            timeout=20,
-        )
-        response.raise_for_status()
-        results = response.json().get("results") or []
-    except requests.RequestException:
-        return ""
-    if not results:
-        return ""
-    normalized = text.upper()
-    if len(normalized) == 12 and normalized.isalnum():
-        for row in results:
-            if clean_text(row.get("uei")).upper() == normalized:
-                return clean_text(row.get("id"))
-    for row in results:
-        if clean_text(row.get("name")).upper() == normalized:
-            return clean_text(row.get("id"))
-    return clean_text(results[0].get("id"))
-
-
-def warm_recipient_profile_cache(keywords: Iterable[str], *, max_workers: int = 8) -> None:
-    unique: list[str] = []
-    seen: set[str] = set()
-    for keyword in keywords:
-        text = clean_text(keyword)
-        if not text:
-            continue
-        token = text.upper()
-        if token in seen:
-            continue
-        seen.add(token)
-        unique.append(text)
-    if not unique:
-        return
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        list(executor.map(_recipient_id_for_keyword, unique))
-
-
 def usaspending_recipient_search_url(query: str) -> str:
     text = clean_text(query)
     if not text:
@@ -155,13 +105,11 @@ def usaspending_recipient_search_url(query: str) -> str:
 
 
 def usaspending_recipient_profile_url(uei: str = "", name: str = "") -> str:
-    recipient_id = ""
-    recipient_uei = clean_text(uei)
-    if recipient_uei:
-        recipient_id = _recipient_id_for_keyword(recipient_uei)
-    if not recipient_id and name:
-        recipient_id = _recipient_id_for_keyword(name)
-    if recipient_id:
-        return f"https://www.usaspending.gov/recipient/{quote(recipient_id, safe='')}/latest"
-    return ""
+    """Return a USAspending recipient link without blocking network lookups.
+
+    Profile pages require a hashed recipient id from `/api/v2/recipient/`. Resolving
+    that for every contractor in a large search adds ~1 minute of wait time, so we
+    deep-link to recipient search by UEI/name instead.
+    """
+    return usaspending_recipient_search_url(uei or name)
 
